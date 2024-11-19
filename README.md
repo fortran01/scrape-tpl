@@ -57,27 +57,34 @@ brew install flyctl
 flyctl auth login
 ```
 
-3. Create a volume for persistent storage:
+3. Create a new Fly.io application:
 ```bash
-flyctl volumes create tpl_data --size 1
+flyctl launch --name tpl-scraper --no-deploy -y
 ```
 
-4. Set up environment secrets:
+4. Create a volume for persistent storage in Toronto region:
+```bash
+flyctl volumes create tpl_data --size 1 --region yyz -y
+```
+
+5. Set up environment secrets:
 ```bash
 flyctl secrets set EMAIL_USER=your.email@gmail.com
 flyctl secrets set EMAIL_PASS=your_gmail_app_password
 flyctl secrets set EMAIL_TO=destination@email.com
 ```
 
-5. Deploy the application:
+6. Deploy the application:
 ```bash
 flyctl deploy
 ```
 
-6. Set up daily scheduling:
+7. Set up daily scheduling:
 ```bash
 flyctl machines run . --schedule daily
 ```
+
+Note: The volume is automatically mounted at `/app/data` as configured in `fly.toml`.
 
 ## Project Structure
 

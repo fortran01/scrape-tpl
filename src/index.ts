@@ -21,6 +21,9 @@ class TPLScraper {
   private readonly transporter: nodemailer.Transporter;
 
   constructor() {
+    // Check if work directory exists and is writable
+    this.checkWorkDir();
+    
     if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
       throw new Error('EMAIL_USER and EMAIL_PASS environment variables must be set');
     }
@@ -32,6 +35,32 @@ class TPLScraper {
         pass: process.env.EMAIL_PASS
       }
     });
+  }
+
+  private async checkWorkDir() {
+    try {
+      await fs.access(this.WORK_DIR, fs.constants.W_OK);
+      console.log(`Work directory ${this.WORK_DIR} is accessible and writable`);
+      
+      // List contents of work directory
+      const files = await fs.readdir(this.WORK_DIR);
+      console.log('Contents of work directory:', files);
+      
+      // If previous_output.xml exists, show its stats
+      if (files.includes('previous_output.xml')) {
+        const stats = await fs.stat(path.join(this.WORK_DIR, 'previous_output.xml'));
+        console.log('previous_output.xml stats:', {
+          size: stats.size,
+          modified: stats.mtime,
+          created: stats.birthtime
+        });
+      } else {
+        console.log('No previous_output.xml found in work directory');
+      }
+    } catch (error) {
+      console.error(`Error accessing work directory ${this.WORK_DIR}:`, error);
+      throw new Error(`Work directory ${this.WORK_DIR} is not accessible or writable. Volume might not be mounted correctly.`);
+    }
   }
 
   private async ensureWorkDir(): Promise<void> {
