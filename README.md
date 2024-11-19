@@ -76,17 +76,14 @@ flyctl secrets set EMAIL_TO=destination@email.com
 
 6. Deploy and schedule the application with volume:
 ```bash
-# Create a scheduled machine with volume mounted
-flyctl machines run . --schedule daily --volume tpl_data:/app/data
+# Create a scheduled machine with volume mounted and custom name
+flyctl machines run . --schedule daily --volume tpl_data:/app/data --restart on-fail
 
 # To manually run the machine (optional)
-flyctl machines start <machine-id>
+flyctl machines start $MACHINE_ID
 
 # To view machine logs
-flyctl machines logs <machine-id>
-```
-
-Note: The machine will run daily at midnight UTC (7:00 PM EST) and automatically stop after completion.
+flyctl machines logs $MACHINE_ID
 
 ## Project Structure
 
