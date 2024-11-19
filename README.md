@@ -64,7 +64,7 @@ flyctl launch --name tpl-scraper --no-deploy -y
 
 4. Create a volume for persistent storage in Toronto region:
 ```bash
-flyctl volumes create tpl_data --size 1 --region yyz -y
+flyctl volumes create tpl_data --size 1 --region yyz --yes
 ```
 
 5. Set up environment secrets:
@@ -74,17 +74,19 @@ flyctl secrets set EMAIL_PASS=your_gmail_app_password
 flyctl secrets set EMAIL_TO=destination@email.com
 ```
 
-6. Deploy the application:
+6. Deploy and schedule the application with volume:
 ```bash
-flyctl deploy
+# Create a scheduled machine with volume mounted
+flyctl machines run . --schedule daily --volume tpl_data:/app/data
+
+# To manually run the machine (optional)
+flyctl machines start <machine-id>
+
+# To view machine logs
+flyctl machines logs <machine-id>
 ```
 
-7. Set up daily scheduling:
-```bash
-flyctl machines run . --schedule daily
-```
-
-Note: The volume is automatically mounted at `/app/data` as configured in `fly.toml`.
+Note: The machine will run daily at midnight UTC (7:00 PM EST) and automatically stop after completion.
 
 ## Project Structure
 
