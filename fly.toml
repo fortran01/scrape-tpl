@@ -1,33 +1,26 @@
-app = "tpl-scraper"
+# fly.toml app configuration file generated for tpl-scraper on 2024-11-18T19:59:00-05:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'tpl-scraper'
+primary_region = 'yyz'
 
 [build]
-  builder = "heroku/buildpacks:20"
 
-[env]
-  PORT = "8080"
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
 
-[mounts]
-  source="tpl_data"
-  destination="/app/data"
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
 
-[[services]]
-  internal_port = 8080
-  protocol = "tcp"
-
-[services.concurrency]
-  hard_limit = 25
-  soft_limit = 20
-
-[[services.ports]]
-  handlers = ["http"]
-  port = "80"
-
-[[services.ports]]
-  handlers = ["tls", "http"]
-  port = "443"
-
-[[services.tcp_checks]]
-  grace_period = "1s"
-  interval = "15s"
-  restart_limit = 6
-  timeout = "2s"
+[[mounts]]
+  source = "tpl_data"
+  destination = "/app/data"
