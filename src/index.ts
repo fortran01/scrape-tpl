@@ -13,6 +13,7 @@ interface RSSItem {
   link: string[];
   description: string[];
   'content:encoded': string[];
+  record: any[];
 }
 
 class TPLScraper {
@@ -81,18 +82,47 @@ class TPLScraper {
     return response.data;
   }
 
-  private formatContent(items: RSSItem[]): string {
-    return items.map(item => {
+  private formatContent(items: RSSItem[], newEvents: Set<string>, removedEvents: Set<string>): string {
+    const changeSummary = [];
+    if (newEvents.size > 0) {
+      changeSummary.push(`<h3>🆕 New Events:</h3><ul>${Array.from(newEvents).map(title => `<li>${title}</li>`).join('')}</ul>`);
+    }
+    if (removedEvents.size > 0) {
+      changeSummary.push(`<h3>🗑️ Removed Events:</h3><ul>${Array.from(removedEvents).map(title => `<li>${title}</li>`).join('')}</ul>`);
+    }
+
+    const eventsList = items.map(item => {
       const content = item['content:encoded'][0]
         .replace(/<content:encoded><!\[CDATA\[/, '')
         .replace(/\]\]><\/content:encoded>/, '')
         .replace(/<record>.*<\/record>/, '');
       
+      const isNew = newEvents.has(item.title[0]);
+      const badge = isNew ? '<span style="background-color: #4CAF50; color: white; padding: 2px 6px; border-radius: 3px; margin-left: 8px;">New</span>' : '';
+      
       return `<div class="item">
+        <h3><a href="${item.link[0]}">${item.title[0]}</a>${badge}</h3>
         ${content}
         <div class="clearfix"></div>
       </div>`;
     }).join('\n');
+
+    return changeSummary.length > 0 ? changeSummary.join('') + '<hr/>' + eventsList : eventsList;
+  }
+
+  private getFirstEventDate(item: RSSItem): Date {
+    try {
+      const record = item.record[0];
+      const dates = record.attributes[0].attr
+        .filter((a: any) => a.name[0] === 'p_event_date')
+        .map((a: any) => a.$.name === 'p_event_date' ? new Date(a._) : null)
+        .filter((d: Date | null) => d !== null);
+      
+      return dates.length > 0 ? dates[0] : new Date();
+    } catch (error) {
+      console.error('Error parsing date:', error);
+      return new Date();
+    }
   }
 
   private async sendEmail(content: string, isError: boolean = false): Promise<void> {
@@ -171,21 +201,34 @@ class TPLScraper {
       await fs.writeFile(currentFile, rssContent);
 
       if (rssContent) {
-        let previousContent: string | null = null;
+        const parser = new xml2js.Parser();
+        const currentResult = await parser.parseStringPromise(rssContent);
+        const currentItems = currentResult.rss.channel[0].item;
+        
+        let previousItems: RSSItem[] = [];
         try {
-          previousContent = await fs.readFile(previousFile, 'utf-8');
+          const previousContent = await fs.readFile(previousFile, 'utf-8');
+          const previousResult = await parser.parseStringPromise(previousContent);
+          previousItems = previousResult.rss.channel[0].item;
         } catch {
           // Previous file doesn't exist, that's okay
         }
 
-        if (!previousContent || previousContent !== rssContent) {
+        // Compare events by title to detect changes
+        const currentTitles = new Set(currentItems.map((item: RSSItem) => item.title[0]));
+        const previousTitles = new Set(previousItems.map((item: RSSItem) => item.title[0]));
+
+        const newEvents = new Set<string>(currentItems
+          .filter((item: RSSItem) => !previousTitles.has(item.title[0]))
+          .map((item: RSSItem) => item.title[0]));
+          
+        const removedEvents = new Set<string>(previousItems
+          .filter((item: RSSItem) => !currentTitles.has(item.title[0]))
+          .map((item: RSSItem) => item.title[0]));
+
+        if (newEvents.size > 0 || removedEvents.size > 0 || previousItems.length === 0) {
           console.log('Changes detected - sending email...');
-          
-          const parser = new xml2js.Parser();
-          const result = await parser.parseStringPromise(rssContent);
-          const items = result.rss.channel[0].item;
-          const formattedContent = this.formatContent(items);
-          
+          const formattedContent = this.formatContent(currentItems, newEvents, removedEvents);
           await this.sendEmail(formattedContent);
           await fs.rename(currentFile, previousFile);
         } else {
