@@ -6,6 +6,8 @@ A TypeScript application that monitors the Toronto Public Library RSS feed for n
 
 - 🔍 Monitors TPL RSS feed for new items
 - 📧 Sends beautifully formatted HTML emails with new items
+- 🆕 Shows summary of new and removed events
+- 📌 Highlights new events with badges
 - 🔄 Runs daily via Fly.io scheduling
 - 💾 Persistent storage to track changes
 - 🚀 Containerized deployment
@@ -47,43 +49,68 @@ npx ts-node src/index.ts
 
 ## Deployment to Fly.io
 
-1. Install the Fly.io CLI:
+1. Install the Fly.io CLI and authenticate:
 ```bash
 brew install flyctl
+fly auth login
 ```
 
-2. Login to Fly.io:
+2. Create a new app and volume (first time only):
 ```bash
-flyctl auth login
+fly apps create tpl-scraper
+fly volumes create tpl_data --region yyz
 ```
 
-3. Create a new Fly.io application:
+3. Set up secrets:
 ```bash
-flyctl launch --name tpl-scraper --no-deploy -y
+fly secrets set EMAIL_USER=your.email@gmail.com
+fly secrets set EMAIL_PASS=your_gmail_app_password
+fly secrets set EMAIL_TO=destination@email.com
 ```
 
-4. Create a volume for persistent storage in Toronto region:
+4. Deploy and schedule:
 ```bash
-flyctl volumes create tpl_data --size 1 --region yyz --yes
-```
-
-5. Set up environment secrets:
-```bash
-flyctl secrets set EMAIL_USER=your.email@gmail.com
-flyctl secrets set EMAIL_PASS=your_gmail_app_password
-flyctl secrets set EMAIL_TO=destination@email.com
-```
-
-6. Deploy and schedule the application with volume:
-```bash
-# Create a scheduled machine with volume mounted and custom name
+# Create a new scheduled machine with volume mount
 flyctl machines run . --schedule daily --volume tpl_data:/app/data --restart on-fail
+```
 
-# To manually run the machine (optional)
-flyctl machines start $MACHINE_ID
+5. Monitor the application:
+```bash
+# List machines
+fly machines list
 
-# To view machine logs
-flyctl machines logs $MACHINE_ID
+# View logs
+fly logs
+```
+
+## Redeploying New Versions
+
+When you make changes to the code:
+
+1. Stop and destroy the existing machine:
+```bash
+# List machines to get the ID
+fly machines list
+
+# Destroy the machine
+fly machine destroy <machine-id>
+```
+
+2. Create a new scheduled machine:
+```bash
+# This will build and deploy your changes
+flyctl machines run . --schedule daily --volume tpl_data:/app/data --restart on-fail
+```
+
+Note: The volume data persists between deployments, so your previous RSS feed state will be preserved.
+
+## Email Notifications
+
+The application sends HTML-formatted emails that include:
+- Summary of new and removed events
+- Event titles with direct links to TPL website
+- Visual indicators for new events
+- Full event descriptions and details
 
 ## Project Structure
 
