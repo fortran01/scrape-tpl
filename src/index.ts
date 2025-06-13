@@ -393,26 +393,43 @@ class TPLScraper {
         return [];
       }
       
-      const dates = record.attributes[0].attr
-        .filter((a: any) => a.name?.[0] === 'p_event_date')
-        .map((a: any) => {
-          try {
-            // Handle different possible date formats in the RSS data
-            const dateValue = a._ || a.$?.value || a.value?.[0];
-            if (dateValue) {
-              const parsedDate = new Date(dateValue);
-              return isNaN(parsedDate.getTime()) ? null : parsedDate;
-            }
-            return null;
-          } catch (dateError) {
-            console.warn('Error parsing individual date:', dateError);
-            return null;
-          }
-        })
-        .filter((d: Date | null) => d !== null)
-        .sort((a: Date, b: Date) => a.getTime() - b.getTime()); // Sort dates chronologically
+      // Get event dates and times
+      const eventDates: string[] = [];
+      const eventTimes: string[] = [];
       
-      return dates as Date[];
+      record.attributes[0].attr.forEach((attr: any) => {
+        if (attr.$.name === 'p_event_date') {
+          eventDates.push(attr._);
+        } else if (attr.$.name === 'p_event_time') {
+          eventTimes.push(attr._);
+        }
+      });
+      
+      // If we have both dates and times, combine them
+      const dates: Date[] = [];
+      
+      if (eventDates.length > 0) {
+        eventDates.forEach((dateStr, index) => {
+          try {
+            let fullDateTimeStr = dateStr;
+            
+            // If we have a corresponding time, add it to the date
+            if (eventTimes.length > 0) {
+              const timeStr = eventTimes[index] || eventTimes[0]; // Use first time if not enough times
+              fullDateTimeStr = `${dateStr}T${timeStr}:00`;
+            }
+            
+            const parsedDate = new Date(fullDateTimeStr);
+            if (!isNaN(parsedDate.getTime())) {
+              dates.push(parsedDate);
+            }
+          } catch (dateError) {
+            console.warn('Error parsing date:', dateStr, dateError);
+          }
+        });
+      }
+      
+      return dates.sort((a: Date, b: Date) => a.getTime() - b.getTime());
     } catch (error) {
       console.error('Error parsing event dates:', error);
       return [];
