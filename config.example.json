@@ -9,6 +9,11 @@
       "name": "High Park Branch", 
       "url": "https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33132+37846&Ns=p_pub_date_sort&Nso=0",
       "enabled": true
+    },
+    {
+      "name": "Bloor/Gladstone Branch",
+      "url": "https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33103+37846&Ns=p_pub_date_sort&Nso=0",
+      "enabled": true
     }
   ],
   "email": {
