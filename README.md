@@ -1,6 +1,6 @@
 # Toronto Public Library New Items Scraper
 
-A TypeScript application that monitors the Toronto Public Library RSS feed for new items and sends email notifications when changes are detected. The application runs daily on Fly.io and maintains a persistent record of previous feed states to avoid duplicate notifications.
+A TypeScript application that monitors the Toronto Public Library RSS feed for new items and sends email notifications when changes are detected. The application uses PostgreSQL for efficient data persistence and runs daily on various platforms with minimal database usage.
 
 ## Features
 
@@ -8,8 +8,9 @@ A TypeScript application that monitors the Toronto Public Library RSS feed for n
 - 📧 Sends beautifully formatted HTML emails with new items
 - 🆕 Shows summary of new and removed events
 - 📌 Highlights new events with badges
-- 🔄 Runs daily via Fly.io scheduling
-- 💾 Persistent storage to track changes
+- 🔄 Runs daily via scheduling (GitHub Actions, Fly.io, etc.)
+- 🗄️ PostgreSQL database for efficient data persistence
+- 🧹 Automatic data pruning to minimize database usage
 - 🚀 Containerized deployment
 - ⚡ Written in TypeScript for type safety
 
@@ -17,8 +18,9 @@ A TypeScript application that monitors the Toronto Public Library RSS feed for n
 
 - Node.js (v18 or later)
 - npm
+- PostgreSQL database (local or hosted)
 - Gmail account (with App Password enabled)
-- Fly.io account
+- Deployment platform account (GitHub Actions, Fly.io, etc.)
 
 ## Local Development Setup
 
@@ -33,16 +35,26 @@ cd scrape-tpl
 npm install
 ```
 
-3. Create a `.env` file in the root directory:
+3. Set up PostgreSQL database:
+Use a hosted PostgreSQL service (see PostgreSQL Hosting Options section below) and get your connection string.
+
+4. Create a `.env` file in the root directory:
+```bash
+# Copy the example file and edit with your values
+cp .env.example .env
+```
+
+Then edit `.env` with your actual values:
 ```env
 EMAIL_USER=your.email@gmail.com
 EMAIL_PASS=your_gmail_app_password
 EMAIL_TO=destination@email.com
+DATABASE_URL=postgresql://username:password@hostname:port/database_name
 ```
 
 Note: You'll need to generate an App Password for your Gmail account at https://myaccount.google.com/apppasswords
 
-4. Run the application:
+5. Run the application:
 ```bash
 npx ts-node src/index.ts
 ```
@@ -54,10 +66,9 @@ npx ts-node src/index.ts
 1. Fork this repository to your GitHub account
 
 2. Set up your `.env` file locally (if you haven't already):
-```env
-EMAIL_USER=your.email@gmail.com
-EMAIL_PASS=your_gmail_app_password
-EMAIL_TO=destination@email.com
+```bash
+cp .env.example .env
+# Then edit .env with your actual values
 ```
 
 3. Install and authenticate with GitHub CLI:
@@ -80,8 +91,8 @@ npm run upload-secrets
 
 5. The workflow will automatically run daily at 9:00 AM UTC
    - You can also trigger it manually from the Actions tab
-   - Data persistence is handled via GitHub artifacts
-   - No additional infrastructure costs
+   - Data persistence is handled via PostgreSQL database
+   - Requires a hosted PostgreSQL database (e.g., Neon, Supabase, AWS RDS)
 
 6. Monitor runs:
    - Go to the Actions tab in your repository
@@ -106,6 +117,7 @@ fly volumes create tpl_data --region yyz
 fly secrets set EMAIL_USER=your.email@gmail.com
 fly secrets set EMAIL_PASS=your_gmail_app_password
 fly secrets set EMAIL_TO=destination@email.com
+fly secrets set DATABASE_URL=postgresql://username:password@hostname:port/database_name
 ```
 
 4. Deploy and schedule:
@@ -167,13 +179,55 @@ The application sends HTML-formatted emails that include:
 
 ## Project Structure
 
-- `src/index.ts` - Main application code
-- `data/` - Local storage directory for XML files
+- `src/index.ts` - Main application code with PostgreSQL integration
 - `scripts/` - Utility scripts
+  - `init-db.sql` - PostgreSQL database initialization script
   - `upload-secrets.sh` - Bash script to upload .env secrets to GitHub
 - `.github/workflows/tpl-scraper.yml` - GitHub Actions workflow for daily runs
 - `Dockerfile` - Container configuration
 - `fly.toml` - Fly.io deployment configuration
+
+## Database Schema
+
+The application uses a single PostgreSQL table `rss_items` with the following structure:
+
+- `id` - Primary key (auto-increment)
+- `title` - Event title (unique identifier)
+- `link` - Direct link to the event page
+- `description` - Event description
+- `content_encoded` - Full HTML content
+- `record_data` - Additional metadata (JSONB)
+- `first_seen` - When item was first detected
+- `last_seen` - When item was last seen in feed
+- `is_active` - Whether item is currently in the RSS feed
+- `created_at` / `updated_at` - Timestamps
+
+The application automatically:
+- Creates the table and indexes on first run
+- Prunes inactive items older than 30 days to minimize database usage
+- Uses efficient upsert operations to minimize database writes
+
+## PostgreSQL Hosting Options
+
+For production deployments, you'll need a hosted PostgreSQL database. Here are some recommended options:
+
+### Free Tier Options
+- **[Neon](https://neon.tech/)** - Serverless PostgreSQL with generous free tier
+- **[Supabase](https://supabase.com/)** - Open source Firebase alternative with PostgreSQL
+- **[Railway](https://railway.app/)** - Simple deployment platform with PostgreSQL
+- **[Aiven](https://aiven.io/)** - Free tier available for small projects
+
+### Paid Options
+- **AWS RDS** - Managed PostgreSQL on Amazon Web Services
+- **Google Cloud SQL** - Managed PostgreSQL on Google Cloud Platform
+- **Azure Database for PostgreSQL** - Microsoft's managed PostgreSQL service
+- **DigitalOcean Managed Databases** - Simple and affordable managed PostgreSQL
+
+### Setup Example (Neon)
+1. Sign up at [neon.tech](https://neon.tech/)
+2. Create a new project
+3. Copy the connection string
+4. Add it to your `.env` file as `DATABASE_URL`
 
 ## Error Handling
 

@@ -1,9 +1,8 @@
 import axios from 'axios';
-import * as fs from 'fs/promises';
-import * as path from 'path';
 import * as xml2js from 'xml2js';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
+import { Pool, PoolClient } from 'pg';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -26,23 +25,22 @@ interface ErrorDetails {
   ip?: string;
 }
 
+interface DBRSSItem {
+  id?: number;
+  title: string;
+  link: string;
+  description: string;
+  content_encoded: string;
+  record_data: any;
+  first_seen: Date;
+  last_seen: Date;
+  is_active: boolean;
+}
+
 class TPLScraper {
   private readonly RSS_URL = 'https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33162+37846&Ns=p_pub_date_sort&Nso=0';
-  private readonly WORK_DIR = this.getWorkDir();
   private readonly transporter: nodemailer.Transporter;
-
-  private getWorkDir(): string {
-    // If running in GitHub Actions, use relative data directory
-    if (process.env.GITHUB_ACTIONS) {
-      return path.join(process.cwd(), 'data');
-    }
-    // If running in Docker (production), use /app/data
-    if (process.env.NODE_ENV === 'production') {
-      return '/app/data';
-    }
-    // Default for local development
-    return path.join(process.cwd(), 'data');
-  }
+  private readonly pool: Pool;
 
   private getEnvironment(): string {
     if (process.env.GITHUB_ACTIONS) {
@@ -76,12 +74,21 @@ class TPLScraper {
   }
 
   constructor() {
-    // Check if work directory exists and is writable
-    this.checkWorkDir();
-    
     if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
       throw new Error('EMAIL_USER and EMAIL_PASS environment variables must be set');
     }
+
+    // Initialize PostgreSQL connection (requires DATABASE_URL)
+    if (!process.env.DATABASE_URL) {
+      throw new Error('DATABASE_URL environment variable must be set');
+    }
+
+    this.pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: 5, // Minimal connection pool
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    });
 
     this.transporter = nodemailer.createTransport({
       service: 'gmail',
@@ -90,39 +97,44 @@ class TPLScraper {
         pass: process.env.EMAIL_PASS
       }
     });
+
+    // Initialize database on startup
+    this.initializeDatabase().catch(console.error);
   }
 
-  private async checkWorkDir() {
+  private async initializeDatabase(): Promise<void> {
+    const client = await this.pool.connect();
     try {
-      await fs.access(this.WORK_DIR, fs.constants.W_OK);
-      console.log(`Work directory ${this.WORK_DIR} is accessible and writable`);
-      
-      // List contents of work directory
-      const files = await fs.readdir(this.WORK_DIR);
-      console.log('Contents of work directory:', files);
-      
-      // If previous_output.xml exists, show its stats
-      if (files.includes('previous_output.xml')) {
-        const stats = await fs.stat(path.join(this.WORK_DIR, 'previous_output.xml'));
-        console.log('previous_output.xml stats:', {
-          size: stats.size,
-          modified: stats.mtime,
-          created: stats.birthtime
-        });
-      } else {
-        console.log('No previous_output.xml found in work directory');
-      }
+      // Create table if it doesn't exist
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS rss_items (
+          id SERIAL PRIMARY KEY,
+          title VARCHAR(500) NOT NULL UNIQUE,
+          link VARCHAR(1000) NOT NULL,
+          description TEXT,
+          content_encoded TEXT,
+          record_data JSONB,
+          first_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          last_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          is_active BOOLEAN DEFAULT TRUE,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+      `);
+
+      // Create index for performance
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_rss_items_title ON rss_items(title);
+        CREATE INDEX IF NOT EXISTS idx_rss_items_active ON rss_items(is_active);
+        CREATE INDEX IF NOT EXISTS idx_rss_items_last_seen ON rss_items(last_seen);
+      `);
+
+      console.log('Database initialized successfully');
     } catch (error) {
-      console.error(`Error accessing work directory ${this.WORK_DIR}:`, error);
-      throw new Error(`Work directory ${this.WORK_DIR} is not accessible or writable. Volume might not be mounted correctly.`);
-    }
-  }
-
-  private async ensureWorkDir(): Promise<void> {
-    try {
-      await fs.access(this.WORK_DIR);
-    } catch {
-      await fs.mkdir(this.WORK_DIR, { recursive: true });
+      console.error('Error initializing database:', error);
+      throw error;
+    } finally {
+      client.release();
     }
   }
 
@@ -159,6 +171,113 @@ class TPLScraper {
     }
   }
 
+  private async getCurrentItemsFromDB(): Promise<DBRSSItem[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        'SELECT * FROM rss_items WHERE is_active = TRUE ORDER BY last_seen DESC'
+      );
+      return result.rows;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async upsertRSSItems(items: RSSItem[]): Promise<{ newItems: string[], removedItems: string[] }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get current active items
+      const currentActiveResult = await client.query(
+        'SELECT title FROM rss_items WHERE is_active = TRUE'
+      );
+      const currentActiveTitles = new Set(currentActiveResult.rows.map((row: any) => row.title));
+
+      // Process new items
+      const newItemTitles: string[] = [];
+      const currentItemTitles = new Set<string>();
+
+      for (const item of items) {
+        // Safely extract data with fallbacks for undefined/empty arrays
+        const title = item.title?.[0];
+        const link = item.link?.[0];
+        const description = item.description?.[0];
+        const contentEncoded = item['content:encoded']?.[0];
+        const recordData = item.record?.[0] ? JSON.stringify(item.record[0]) : null;
+
+        // Skip items with missing essential data
+        if (!title || !link) {
+          console.warn('Skipping item with missing title or link:', { title, link });
+          continue;
+        }
+
+        currentItemTitles.add(title);
+
+        // Check if this is a new item
+        if (!currentActiveTitles.has(title)) {
+          newItemTitles.push(title);
+        }
+
+        // Upsert the item
+        await client.query(`
+          INSERT INTO rss_items (title, link, description, content_encoded, record_data, last_seen, is_active)
+          VALUES ($1, $2, $3, $4, $5, NOW(), TRUE)
+          ON CONFLICT (title) 
+          DO UPDATE SET 
+            link = EXCLUDED.link,
+            description = EXCLUDED.description,
+            content_encoded = EXCLUDED.content_encoded,
+            record_data = EXCLUDED.record_data,
+            last_seen = NOW(),
+            is_active = TRUE,
+            updated_at = NOW()
+        `, [title, link, description, contentEncoded, recordData]);
+      }
+
+      // Mark items as inactive if they're no longer in the feed
+      const removedItemTitles: string[] = [];
+      for (const activeTitle of currentActiveTitles) {
+        if (!currentItemTitles.has(activeTitle)) {
+          removedItemTitles.push(activeTitle);
+          await client.query(
+            'UPDATE rss_items SET is_active = FALSE, updated_at = NOW() WHERE title = $1',
+            [activeTitle]
+          );
+        }
+      }
+
+      await client.query('COMMIT');
+
+      return { newItems: newItemTitles, removedItems: removedItemTitles };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async pruneOldData(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      // Keep only last 30 days of inactive items to minimize DB usage
+      const result = await client.query(`
+        DELETE FROM rss_items 
+        WHERE is_active = FALSE 
+        AND last_seen < NOW() - INTERVAL '30 days'
+      `);
+      
+      if (result.rowCount && result.rowCount > 0) {
+        console.log(`Pruned ${result.rowCount} old inactive items from database`);
+      }
+    } catch (error) {
+      console.error('Error pruning old data:', error);
+    } finally {
+      client.release();
+    }
+  }
+
   private formatContent(items: RSSItem[], newEvents: Set<string>, removedEvents: Set<string>): string {
     const changeSummary = [];
     if (newEvents.size > 0) {
@@ -169,16 +288,21 @@ class TPLScraper {
     }
 
     const eventsList = items.map(item => {
-      const content = item['content:encoded'][0]
+      // Safely extract data with fallbacks
+      const title = item.title?.[0] || 'No Title';
+      const link = item.link?.[0] || '#';
+      const contentEncoded = item['content:encoded']?.[0] || '';
+      
+      const content = contentEncoded
         .replace(/<content:encoded><!\[CDATA\[/, '')
         .replace(/\]\]><\/content:encoded>/, '')
         .replace(/<record>.*<\/record>/, '');
       
-      const isNew = newEvents.has(item.title[0]);
+      const isNew = newEvents.has(title);
       const badge = isNew ? '<span style="background-color: #4CAF50; color: white; padding: 2px 6px; border-radius: 3px; margin-left: 8px;">New</span>' : '';
       
       return `<div class="item">
-        <h3><a href="${item.link[0]}">${item.title[0]}</a>${badge}</h3>
+        <h3><a href="${link}">${title}</a>${badge}</h3>
         ${content}
         <div class="clearfix"></div>
       </div>`;
@@ -189,9 +313,13 @@ class TPLScraper {
 
   private getFirstEventDate(item: RSSItem): Date {
     try {
-      const record = item.record[0];
+      const record = item.record?.[0];
+      if (!record || !record.attributes?.[0]?.attr) {
+        return new Date();
+      }
+      
       const dates = record.attributes[0].attr
-        .filter((a: any) => a.name[0] === 'p_event_date')
+        .filter((a: any) => a.name?.[0] === 'p_event_date')
         .map((a: any) => a.$.name === 'p_event_date' ? new Date(a._) : null)
         .filter((d: Date | null) => d !== null);
       
@@ -312,6 +440,7 @@ class TPLScraper {
               <ul>
                   <li>Check if the TPL RSS feed URL is still accessible: <a href="${this.RSS_URL}">${this.RSS_URL}</a></li>
                   <li>Verify network connectivity from the ${errorDetails.environment} environment</li>
+                  <li>Check database connectivity and credentials</li>
                   ${errorDetails.statusCode && errorDetails.statusCode >= 500 ? 
                     '<li>This appears to be a server-side error. The issue may resolve automatically.</li>' : ''}
                   ${errorDetails.statusCode && errorDetails.statusCode >= 400 && errorDetails.statusCode < 500 ? 
@@ -385,48 +514,41 @@ class TPLScraper {
 
   public async run(): Promise<void> {
     try {
-      await this.ensureWorkDir();
+      console.log('Starting TPL Scraper with PostgreSQL backend...');
       
-      const currentFile = path.join(this.WORK_DIR, 'current_output.xml');
-      const previousFile = path.join(this.WORK_DIR, 'previous_output.xml');
+      // Initialize database first
+      await this.initializeDatabase();
+      
+      // Prune old data to keep DB minimal
+      await this.pruneOldData();
 
       const rssContent = await this.fetchRSSFeed();
-      await fs.writeFile(currentFile, rssContent);
 
       if (rssContent) {
         const parser = new xml2js.Parser();
         const currentResult = await parser.parseStringPromise(rssContent);
-        const currentItems = currentResult.rss.channel[0].item;
+        const currentItems: RSSItem[] = currentResult.rss.channel[0].item;
         
-        let previousItems: RSSItem[] = [];
-        try {
-          const previousContent = await fs.readFile(previousFile, 'utf-8');
-          const previousResult = await parser.parseStringPromise(previousContent);
-          previousItems = previousResult.rss.channel[0].item;
-        } catch {
-          // Previous file doesn't exist, that's okay
-        }
+        // Get current items from database and update with new feed data
+        const { newItems, removedItems } = await this.upsertRSSItems(currentItems);
 
-        // Compare events by title to detect changes
-        const currentTitles = new Set(currentItems.map((item: RSSItem) => item.title[0]));
-        const previousTitles = new Set(previousItems.map((item: RSSItem) => item.title[0]));
+        const newEvents = new Set(newItems);
+        const removedEvents = new Set(removedItems);
 
-        const newEvents = new Set<string>(currentItems
-          .filter((item: RSSItem) => !previousTitles.has(item.title[0]))
-          .map((item: RSSItem) => item.title[0]));
-          
-        const removedEvents = new Set<string>(previousItems
-          .filter((item: RSSItem) => !currentTitles.has(item.title[0]))
-          .map((item: RSSItem) => item.title[0]));
+        // Check if this is the first run (no previous data)
+        const dbItems = await this.getCurrentItemsFromDB();
+        const isFirstRun = dbItems.length === currentItems.length && newItems.length === currentItems.length;
 
-        if (newEvents.size > 0 || removedEvents.size > 0 || previousItems.length === 0) {
-          console.log('Changes detected - sending email...');
+        if (newEvents.size > 0 || removedEvents.size > 0) {
+          console.log(`Changes detected - New: ${newEvents.size}, Removed: ${removedEvents.size}`);
           const formattedContent = this.formatContent(currentItems, newEvents, removedEvents);
           await this.sendEmail(formattedContent);
-          await fs.rename(currentFile, previousFile);
+        } else if (isFirstRun) {
+          console.log('First run detected - sending initial email with all items');
+          const formattedContent = this.formatContent(currentItems, new Set(), new Set());
+          await this.sendEmail(formattedContent);
         } else {
           console.log('No changes detected');
-          await fs.unlink(currentFile);
         }
       } else {
         throw new Error('Empty RSS content received');
@@ -468,6 +590,9 @@ class TPLScraper {
           environment: this.getEnvironment()
         });
       }
+    } finally {
+      // Close database connections
+      await this.pool.end();
     }
   }
 }
