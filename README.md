@@ -47,7 +47,47 @@ Note: You'll need to generate an App Password for your Gmail account at https://
 npx ts-node src/index.ts
 ```
 
-## Deployment to Fly.io
+## Deployment Options
+
+### Option 1: GitHub Actions (Recommended)
+
+1. Fork this repository to your GitHub account
+
+2. Set up your `.env` file locally (if you haven't already):
+```env
+EMAIL_USER=your.email@gmail.com
+EMAIL_PASS=your_gmail_app_password
+EMAIL_TO=destination@email.com
+```
+
+3. Install and authenticate with GitHub CLI:
+```bash
+# Install GitHub CLI (if not already installed)
+brew install gh
+
+# Authenticate with GitHub
+gh auth login
+```
+
+4. Upload secrets automatically using the provided script:
+```bash
+# Using npm script
+npm run upload-secrets
+
+# Or run directly
+./scripts/upload-secrets.sh
+```
+
+5. The workflow will automatically run daily at 9:00 AM UTC
+   - You can also trigger it manually from the Actions tab
+   - Data persistence is handled via GitHub artifacts
+   - No additional infrastructure costs
+
+6. Monitor runs:
+   - Go to the Actions tab in your repository
+   - View logs and status of each run
+
+### Option 2: Fly.io
 
 1. Install the Fly.io CLI and authenticate:
 ```bash
@@ -71,7 +111,7 @@ fly secrets set EMAIL_TO=destination@email.com
 4. Deploy and schedule:
 ```bash
 # Create a new scheduled machine with volume mount
-flyctl machines run . --schedule daily --volume tpl_data:/app/data --restart on-fail
+flyctl machines run . --schedule daily --volume tpl_data:/app/data --restart on-fail --region yyz
 ```
 
 5. Monitor the application:
@@ -83,7 +123,20 @@ fly machines list
 fly logs
 ```
 
-## Redeploying New Versions
+## Updating the Application
+
+### For GitHub Actions Deployment
+
+Simply push your changes to the main branch of your forked repository:
+```bash
+git add .
+git commit -m "Update scraper functionality"
+git push origin main
+```
+
+The next scheduled run will automatically use your updated code. Previous data is preserved via GitHub artifacts.
+
+### For Fly.io Deployment
 
 When you make changes to the code:
 
@@ -99,7 +152,7 @@ fly machine destroy <machine-id>
 2. Create a new scheduled machine:
 ```bash
 # This will build and deploy your changes
-flyctl machines run . --schedule daily --volume tpl_data:/app/data --restart on-fail
+flyctl machines run . --schedule daily --volume tpl_data:/app/data --restart on-fail --region yyz
 ```
 
 Note: The volume data persists between deployments, so your previous RSS feed state will be preserved.
@@ -116,6 +169,9 @@ The application sends HTML-formatted emails that include:
 
 - `src/index.ts` - Main application code
 - `data/` - Local storage directory for XML files
+- `scripts/` - Utility scripts
+  - `upload-secrets.sh` - Bash script to upload .env secrets to GitHub
+- `.github/workflows/tpl-scraper.yml` - GitHub Actions workflow for daily runs
 - `Dockerfile` - Container configuration
 - `fly.toml` - Fly.io deployment configuration
 
