@@ -1,10 +1,20 @@
 name: TPL Scraper Daily Run
 
+# WORKFLOW DISABLED - Original triggers commented out below
 on:
-  schedule:
-    # Run daily at 9:00 AM UTC (5:00 AM EST / 4:00 AM EDT)
-    - cron: "0 9 * * *"
-  workflow_dispatch: # Allow manual triggering
+  # This workflow is disabled - using a dummy trigger that will never execute
+  workflow_dispatch:
+    inputs:
+      disabled:
+        description: "This workflow is disabled"
+        required: false
+        default: "true"
+
+# Original triggers (disabled):
+# schedule:
+#   # Run daily at 9:00 AM UTC (5:00 AM EST / 4:00 AM EDT)
+#   - cron: "0 9 * * *"
+# workflow_dispatch: # Allow manual triggering
 
 jobs:
   scrape-tpl:
