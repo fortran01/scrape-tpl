@@ -1,0 +1,24 @@
+# Pulumi Configuration for TPL Scraper
+# This file configures Pulumi preferences for the project
+
+# Backend configuration
+backend:
+  # Use Google Cloud Storage for state management
+  # The actual bucket URL will be set by backend-setup.sh
+  url: ""
+
+# Project settings
+project:
+  # Enable structured logging
+  structured: true
+
+  # Disable analytics for privacy
+  disable-analytics: true
+
+# Stack settings
+stack:
+  # Enable automatic state refresh
+  auto-refresh: true
+
+  # Parallel resource operations for faster deployments
+  parallel: 10

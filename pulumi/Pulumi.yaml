@@ -1,0 +1,10 @@
+name: tpl-scraper-gcp
+runtime: nodejs
+description: TPL RSS scraper deployed on Google Cloud Run with Secret Manager
+template:
+  config:
+    gcp:project:
+      description: The Google Cloud project ID
+    gcp:region:
+      description: The Google Cloud region (closest to Toronto)
+      default: northamerica-northeast2

@@ -1,75 +1,91 @@
 #!/bin/bash
 
-# Script to upload secrets from .env file to GitHub repository
-# Requires GitHub CLI (gh) to be installed and authenticated
+# Upload TPL Scraper secrets to Google Cloud Secret Manager
+set -e
 
-set -e  # Exit on any error
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-echo -e "${YELLOW}TPL Scraper - GitHub Secrets Upload Script${NC}"
-echo "=============================================="
-
-# Check if GitHub CLI is installed
-if ! command -v gh &> /dev/null; then
-    echo -e "${RED}Error: GitHub CLI (gh) is not installed.${NC}"
-    echo "Please install it from: https://cli.github.com/"
-    echo "Or run: brew install gh"
-    exit 1
-fi
-
-# Check if user is authenticated
-if ! gh auth status &> /dev/null; then
-    echo -e "${RED}Error: Not authenticated with GitHub CLI.${NC}"
-    echo "Please run: gh auth login"
-    exit 1
-fi
+echo "🔐 Uploading TPL Scraper secrets to Google Cloud Secret Manager"
+echo "=============================================================="
 
 # Check if .env file exists
 if [ ! -f ".env" ]; then
-    echo -e "${RED}Error: .env file not found in current directory.${NC}"
-    echo "Please make sure you're running this script from the project root."
+    echo "❌ .env file not found in the current directory"
+    echo "   Please create a .env file with your credentials first"
     exit 1
 fi
 
-echo -e "${YELLOW}Reading secrets from .env file...${NC}"
+# Check if gcloud is installed and authenticated
+command -v gcloud >/dev/null 2>&1 || { echo "❌ Google Cloud CLI is required but not installed. Please install it first: https://cloud.google.com/sdk/docs/install"; exit 1; }
 
-# Read .env file and upload secrets
-while IFS='=' read -r key value || [ -n "$key" ]; do
-    # Skip empty lines and comments
-    if [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]]; then
-        continue
-    fi
+# Check if user is logged into gcloud
+if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q .; then
+    echo "❌ You are not logged into Google Cloud. Please run: gcloud auth login"
+    exit 1
+fi
+
+# Get project ID
+PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
+if [ -z "$PROJECT_ID" ]; then
+    echo "❌ No Google Cloud project is set. Please run: gcloud config set project YOUR_PROJECT_ID"
+    exit 1
+fi
+
+echo "✅ Using Google Cloud project: $PROJECT_ID"
+
+# Source the .env file to load variables
+set -a  # automatically export all variables
+source .env
+set +a  # stop automatically exporting
+
+# Check required variables
+if [ -z "$EMAIL_USER" ] || [ -z "$EMAIL_PASS" ] || [ -z "$EMAIL_TO" ] || [ -z "$DATABASE_URL" ]; then
+    echo "❌ Missing required environment variables in .env file"
+    echo "   Required: EMAIL_USER, EMAIL_PASS, EMAIL_TO, DATABASE_URL"
+    exit 1
+fi
+
+echo "📋 Found required environment variables"
+
+# Function to create or overwrite secret
+create_or_update_secret() {
+    local secret_name=$1
+    local secret_value=$2
     
-    # Remove any whitespace
-    key=$(echo "$key" | xargs)
-    value=$(echo "$value" | xargs)
+    echo "🔑 Processing secret: $secret_name"
     
-    if [[ -n "$key" && -n "$value" ]]; then
-        echo -e "Uploading secret: ${GREEN}$key${NC}"
-        
-        # Upload the secret to GitHub
-        if echo "$value" | gh secret set "$key"; then
-            echo -e "✅ Successfully uploaded: ${GREEN}$key${NC}"
-        else
-            echo -e "❌ Failed to upload: ${RED}$key${NC}"
-            exit 1
-        fi
+    # Check if secret exists
+    if gcloud secrets describe "$secret_name" --project="$PROJECT_ID" >/dev/null 2>&1; then
+        echo "   🗑️  Deleting existing secret: $secret_name"
+        gcloud secrets delete "$secret_name" --project="$PROJECT_ID" --quiet
+        echo "   ✨ Creating new secret: $secret_name"
+        echo -n "$secret_value" | gcloud secrets create "$secret_name" --data-file=- --project="$PROJECT_ID"
+    else
+        echo "   ✨ Creating new secret: $secret_name"
+        echo -n "$secret_value" | gcloud secrets create "$secret_name" --data-file=- --project="$PROJECT_ID"
     fi
-done < .env
+}
+
+# Enable Secret Manager API if not already enabled
+echo "🔧 Ensuring Secret Manager API is enabled..."
+gcloud services enable secretmanager.googleapis.com --project="$PROJECT_ID"
+
+# Upload secrets
+create_or_update_secret "tpl-scraper-email-user" "$EMAIL_USER"
+create_or_update_secret "tpl-scraper-email-pass" "$EMAIL_PASS"
+create_or_update_secret "tpl-scraper-email-to" "$EMAIL_TO"
+create_or_update_secret "tpl-scraper-database-url" "$DATABASE_URL"
 
 echo ""
-echo -e "${GREEN}✅ All secrets uploaded successfully!${NC}"
+echo "✅ All secrets uploaded successfully!"
 echo ""
-echo -e "${YELLOW}Next steps:${NC}"
-echo "1. The GitHub Actions workflow will now have access to your secrets"
-echo "2. You can verify the secrets in your repository settings:"
-echo "   Settings → Secrets and variables → Actions"
-echo "3. The workflow will run daily at 9:00 AM UTC"
-echo "4. You can also trigger it manually from the Actions tab"
+echo "📋 Created/Updated secrets:"
+echo "   - tpl-scraper-email-user"
+echo "   - tpl-scraper-email-pass"
+echo "   - tpl-scraper-email-to"
+echo "   - tpl-scraper-database-url"
 echo ""
-echo -e "${GREEN}Your TPL scraper is now ready to run on GitHub Actions!${NC}" 
+echo "🚀 You can now deploy your Pulumi infrastructure:"
+echo "   cd pulumi"
+echo "   pulumi up"
+echo ""
+echo "🔍 To view secrets in Google Cloud Console:"
+echo "   https://console.cloud.google.com/security/secret-manager?project=$PROJECT_ID" 
