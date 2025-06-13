@@ -273,6 +273,67 @@ class TPLScraper {
     }
   }
 
+  private async fetchAllRSSItems(baseUrl: string): Promise<RSSItem[]> {
+    const allItems: RSSItem[] = [];
+    let pageOffset = 0;
+    const pageSize = 10; // TPL RSS feeds return 10 items per page
+    
+    try {
+      while (true) {
+        // Construct URL with pagination
+        const url = pageOffset === 0 ? baseUrl : `${baseUrl}&No=${pageOffset}`;
+        console.log(`  Fetching page ${Math.floor(pageOffset / pageSize) + 1} (offset ${pageOffset})`);
+        
+        const rssContent = await this.fetchRSSFeed(url);
+        
+        if (!rssContent) {
+          console.warn(`  Empty RSS content received for offset ${pageOffset}`);
+          break;
+        }
+
+        const parser = new xml2js.Parser();
+        const result = await parser.parseStringPromise(rssContent);
+        
+        if (!result.rss || !result.rss.channel || !result.rss.channel[0] || !result.rss.channel[0].item) {
+          console.warn(`  No items found in RSS structure for offset ${pageOffset}`);
+          break;
+        }
+
+        const pageItems: RSSItem[] = result.rss.channel[0].item;
+        
+        if (pageItems.length === 0) {
+          console.log(`  No more items found at offset ${pageOffset}`);
+          break;
+        }
+
+        console.log(`  Found ${pageItems.length} items on this page`);
+        allItems.push(...pageItems);
+        
+        // If we got fewer items than the page size, we've reached the end
+        if (pageItems.length < pageSize) {
+          console.log(`  Reached end of results (got ${pageItems.length} < ${pageSize})`);
+          break;
+        }
+        
+        pageOffset += pageSize;
+        
+        // Safety check to prevent infinite loops
+        if (pageOffset > 1000) {
+          console.warn(`  Safety limit reached at offset ${pageOffset}, stopping pagination`);
+          break;
+        }
+      }
+      
+      console.log(`  Total items collected: ${allItems.length}`);
+      return allItems;
+      
+    } catch (error) {
+      console.error(`  Error during pagination at offset ${pageOffset}:`, error);
+      // Return what we have so far
+      return allItems;
+    }
+  }
+
   private async getCurrentItemsFromDB(): Promise<DBRSSItem[]> {
     const client = await this.pool.connect();
     try {
@@ -426,12 +487,51 @@ class TPLScraper {
   }
 
   private formatContent(items: RSSItemWithFeed[], newEvents: Set<string>, removedEvents: Set<string>): string {
+    // Create a mapping from event title to branch name for new/removed events
+    const titleToBranchMap = new Map<string, string>();
+    items.forEach(item => {
+      const title = item.title?.[0] || 'No Title';
+      titleToBranchMap.set(title, item.feedName);
+    });
+
     const changeSummary = [];
     if (newEvents.size > 0) {
-      changeSummary.push(`<h3>🆕 New Events:</h3><ul>${Array.from(newEvents).map(title => `<li>${title}</li>`).join('')}</ul>`);
+      // Group new events by branch
+      const eventsByBranch = new Map<string, string[]>();
+      Array.from(newEvents).forEach(title => {
+        const branch = titleToBranchMap.get(title) || 'Unknown Branch';
+        if (!eventsByBranch.has(branch)) {
+          eventsByBranch.set(branch, []);
+        }
+        eventsByBranch.get(branch)!.push(title);
+      });
+
+      // Create grouped HTML
+      const branchSections = Array.from(eventsByBranch.entries()).map(([branch, titles]) => {
+        const eventsList = titles.map(title => `<li>${title}</li>`).join('');
+        return `<h4 style="color: #2B4C7E; margin: 15px 0 8px 0; font-size: 1.1em;">📍 ${branch}</h4><ul style="margin-top: 5px;">${eventsList}</ul>`;
+      });
+      
+      changeSummary.push(`<h3>🆕 New Events:</h3>${branchSections.join('')}`);
     }
     if (removedEvents.size > 0) {
-      changeSummary.push(`<h3>🗑️ Removed Events:</h3><ul>${Array.from(removedEvents).map(title => `<li>${title}</li>`).join('')}</ul>`);
+      // Group removed events by branch
+      const eventsByBranch = new Map<string, string[]>();
+      Array.from(removedEvents).forEach(title => {
+        const branch = titleToBranchMap.get(title) || 'Unknown Branch';
+        if (!eventsByBranch.has(branch)) {
+          eventsByBranch.set(branch, []);
+        }
+        eventsByBranch.get(branch)!.push(title);
+      });
+
+      // Create grouped HTML
+      const branchSections = Array.from(eventsByBranch.entries()).map(([branch, titles]) => {
+        const eventsList = titles.map(title => `<li>${title}</li>`).join('');
+        return `<h4 style="color: #2B4C7E; margin: 15px 0 8px 0; font-size: 1.1em;">📍 ${branch}</h4><ul style="margin-top: 5px;">${eventsList}</ul>`;
+      });
+      
+      changeSummary.push(`<h3>🗑️ Removed Events:</h3>${branchSections.join('')}`);
     }
 
     const eventsList = items.map(item => {
@@ -847,13 +947,10 @@ class TPLScraper {
         console.log(`Processing feed: ${feed.name}`);
         
         try {
-          const rssContent = await this.fetchRSSFeed(feed.url);
-
-          if (rssContent) {
-            const parser = new xml2js.Parser();
-            const currentResult = await parser.parseStringPromise(rssContent);
-            const currentItems: RSSItem[] = currentResult.rss.channel[0].item;
-            
+          // Use the new pagination method to fetch all items
+          const currentItems: RSSItem[] = await this.fetchAllRSSItems(feed.url);
+          
+          if (currentItems.length > 0) {
             // Get current items from database and update with new feed data
             const { newItems, removedItems } = await this.upsertRSSItems(currentItems, feed.name);
 
@@ -870,7 +967,7 @@ class TPLScraper {
 
             console.log(`Feed ${feed.name}: ${newItems.length} new, ${removedItems.length} removed`);
           } else {
-            console.warn(`Empty RSS content received for feed: ${feed.name}`);
+            console.warn(`No items found for feed: ${feed.name}`);
           }
         } catch (feedError) {
           console.error(`Error processing feed ${feed.name}:`, feedError);
