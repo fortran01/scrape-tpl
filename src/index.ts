@@ -32,6 +32,7 @@ interface DBRSSItem {
   description: string;
   content_encoded: string;
   record_data: any;
+  event_dates: Date[];
   first_seen: Date;
   last_seen: Date;
   is_active: boolean;
@@ -114,12 +115,19 @@ class TPLScraper {
           description TEXT,
           content_encoded TEXT,
           record_data JSONB,
+          event_dates TIMESTAMP WITH TIME ZONE[],
           first_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
           last_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
           is_active BOOLEAN DEFAULT TRUE,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
+      `);
+
+      // Add event_dates column if it doesn't exist (for existing databases)
+      await client.query(`
+        ALTER TABLE rss_items 
+        ADD COLUMN IF NOT EXISTS event_dates TIMESTAMP WITH TIME ZONE[];
       `);
 
       // Create index for performance
@@ -205,6 +213,9 @@ class TPLScraper {
         const description = item.description?.[0];
         const contentEncoded = item['content:encoded']?.[0];
         const recordData = item.record?.[0] ? JSON.stringify(item.record[0]) : null;
+        
+        // Extract event dates
+        const eventDates = this.getEventDates(item);
 
         // Skip items with missing essential data
         if (!title || !link) {
@@ -221,18 +232,19 @@ class TPLScraper {
 
         // Upsert the item
         await client.query(`
-          INSERT INTO rss_items (title, link, description, content_encoded, record_data, last_seen, is_active)
-          VALUES ($1, $2, $3, $4, $5, NOW(), TRUE)
+          INSERT INTO rss_items (title, link, description, content_encoded, record_data, event_dates, last_seen, is_active)
+          VALUES ($1, $2, $3, $4, $5, $6, NOW(), TRUE)
           ON CONFLICT (title) 
           DO UPDATE SET 
             link = EXCLUDED.link,
             description = EXCLUDED.description,
             content_encoded = EXCLUDED.content_encoded,
             record_data = EXCLUDED.record_data,
+            event_dates = EXCLUDED.event_dates,
             last_seen = NOW(),
             is_active = TRUE,
             updated_at = NOW()
-        `, [title, link, description, contentEncoded, recordData]);
+        `, [title, link, description, contentEncoded, recordData, eventDates]);
       }
 
       // Mark items as inactive if they're no longer in the feed
@@ -278,6 +290,45 @@ class TPLScraper {
     }
   }
 
+  private async clearDatabase(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      console.log('🗑️  Clearing database...');
+      
+      // Delete all items from the database
+      const result = await client.query('DELETE FROM rss_items');
+      
+      console.log(`✅ Database cleared successfully. Removed ${result.rowCount || 0} items.`);
+      
+      // Reset the sequence to start from 1 again
+      await client.query('ALTER SEQUENCE rss_items_id_seq RESTART WITH 1');
+      console.log('✅ Database ID sequence reset to 1.');
+      
+    } catch (error) {
+      console.error('❌ Error clearing database:', error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async confirmClearDatabase(): Promise<boolean> {
+    // In production environments, require explicit confirmation
+    if (this.isProductionEnvironment()) {
+      console.log('⚠️  WARNING: You are attempting to clear the database in a production environment!');
+      console.log('⚠️  This action cannot be undone and will permanently delete all stored RSS items.');
+      console.log('⚠️  To proceed, you must set the environment variable CONFIRM_CLEAR_DB=true');
+      
+      return process.env.CONFIRM_CLEAR_DB === 'true';
+    }
+    
+    // For local development, show warning but allow
+    console.log('⚠️  WARNING: This will permanently delete all RSS items from the database.');
+    console.log('⚠️  This action cannot be undone.');
+    
+    return true;
+  }
+
   private formatContent(items: RSSItem[], newEvents: Set<string>, removedEvents: Set<string>): string {
     const changeSummary = [];
     if (newEvents.size > 0) {
@@ -301,8 +352,13 @@ class TPLScraper {
       const isNew = newEvents.has(title);
       const badge = isNew ? '<span style="background-color: #4CAF50; color: white; padding: 2px 6px; border-radius: 3px; margin-left: 8px;">New</span>' : '';
       
+      // Get and format event dates
+      const eventDates = this.getEventDates(item);
+      const formattedDates = this.formatEventDates(eventDates);
+      
       return `<div class="item">
         <h3><a href="${link}">${title}</a>${badge}</h3>
+        ${formattedDates}
         ${content}
         <div class="clearfix"></div>
       </div>`;
@@ -327,6 +383,81 @@ class TPLScraper {
     } catch (error) {
       console.error('Error parsing date:', error);
       return new Date();
+    }
+  }
+
+  private getEventDates(item: RSSItem): Date[] {
+    try {
+      const record = item.record?.[0];
+      if (!record || !record.attributes?.[0]?.attr) {
+        return [];
+      }
+      
+      const dates = record.attributes[0].attr
+        .filter((a: any) => a.name?.[0] === 'p_event_date')
+        .map((a: any) => {
+          try {
+            // Handle different possible date formats in the RSS data
+            const dateValue = a._ || a.$?.value || a.value?.[0];
+            if (dateValue) {
+              const parsedDate = new Date(dateValue);
+              return isNaN(parsedDate.getTime()) ? null : parsedDate;
+            }
+            return null;
+          } catch (dateError) {
+            console.warn('Error parsing individual date:', dateError);
+            return null;
+          }
+        })
+        .filter((d: Date | null) => d !== null)
+        .sort((a: Date, b: Date) => a.getTime() - b.getTime()); // Sort dates chronologically
+      
+      return dates as Date[];
+    } catch (error) {
+      console.error('Error parsing event dates:', error);
+      return [];
+    }
+  }
+
+  private formatEventDates(dates: Date[]): string {
+    if (dates.length === 0) {
+      return '';
+    }
+
+    const formatDate = (date: Date): string => {
+      return date.toLocaleDateString('en-US', {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    };
+
+    const formatTime = (date: Date): string => {
+      return date.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    };
+
+    if (dates.length === 1) {
+      const date = dates[0];
+      const dateStr = formatDate(date);
+      const timeStr = formatTime(date);
+      return `<div class="event-date">📅 ${dateStr} at ${timeStr}</div>`;
+    } else {
+      // Multiple dates - show them as a list
+      const datesList = dates.map(date => {
+        const dateStr = formatDate(date);
+        const timeStr = formatTime(date);
+        return `<li>${dateStr} at ${timeStr}</li>`;
+      }).join('');
+      
+      return `<div class="event-dates">
+        <div class="event-dates-label">📅 Event Dates:</div>
+        <ul class="event-dates-list">${datesList}</ul>
+      </div>`;
     }
   }
 
@@ -494,6 +625,35 @@ class TPLScraper {
                 clear: both;
                 display: table;
             }
+            .event-date {
+                background-color: #f0f8ff;
+                border-left: 4px solid #2B4C7E;
+                padding: 8px 12px;
+                margin: 10px 0;
+                font-weight: bold;
+                color: #2B4C7E;
+                border-radius: 4px;
+            }
+            .event-dates {
+                background-color: #f0f8ff;
+                border-left: 4px solid #2B4C7E;
+                padding: 8px 12px;
+                margin: 10px 0;
+                border-radius: 4px;
+            }
+            .event-dates-label {
+                font-weight: bold;
+                color: #2B4C7E;
+                margin-bottom: 5px;
+            }
+            .event-dates-list {
+                margin: 0;
+                padding-left: 20px;
+                color: #2B4C7E;
+            }
+            .event-dates-list li {
+                margin: 3px 0;
+            }
         </style>
     </head>
     <body>
@@ -512,12 +672,25 @@ class TPLScraper {
     });
   }
 
-  public async run(): Promise<void> {
+  public async run(clearDb: boolean = false): Promise<void> {
     try {
       console.log('Starting TPL Scraper with PostgreSQL backend...');
       
       // Initialize database first
       await this.initializeDatabase();
+      
+      // Handle clear database command
+      if (clearDb) {
+        const confirmed = await this.confirmClearDatabase();
+        if (confirmed) {
+          await this.clearDatabase();
+          console.log('✅ Database cleared successfully. Exiting...');
+          return;
+        } else {
+          console.log('❌ Database clear operation cancelled.');
+          return;
+        }
+      }
       
       // Prune old data to keep DB minimal
       await this.pruneOldData();
@@ -599,6 +772,39 @@ class TPLScraper {
 
 // Run the scraper
 if (require.main === module) {
+  // Parse command line arguments
+  const args = process.argv.slice(2);
+  const clearDb = args.includes('--clear-db') || args.includes('--clear');
+  const showHelp = args.includes('--help') || args.includes('-h');
+  
+  if (showHelp) {
+    console.log('TPL Scraper - Toronto Public Library RSS Feed Monitor');
+    console.log('================================================');
+    console.log('');
+    console.log('Usage:');
+    console.log('  npm start                    Run the scraper normally');
+    console.log('  npm run dev                  Run in development mode');
+    console.log('  npm run clear-db             Clear database with safety checks');
+    console.log('');
+    console.log('Command line options:');
+    console.log('  --clear-db, --clear          Clear all data from database');
+    console.log('  --help, -h                   Show this help message');
+    console.log('');
+    console.log('Environment variables:');
+    console.log('  EMAIL_USER                   Gmail address for sending notifications');
+    console.log('  EMAIL_PASS                   Gmail app password');
+    console.log('  EMAIL_TO                     Recipient email address');
+    console.log('  DATABASE_URL                 PostgreSQL connection string');
+    console.log('  CONFIRM_CLEAR_DB             Set to "true" to allow clearing in production');
+    console.log('');
+    process.exit(0);
+  }
+  
   const scraper = new TPLScraper();
-  scraper.run().catch(console.error);
+  
+  if (clearDb) {
+    console.log('🗑️  Clear database mode activated');
+  }
+  
+  scraper.run(clearDb).catch(console.error);
 }
