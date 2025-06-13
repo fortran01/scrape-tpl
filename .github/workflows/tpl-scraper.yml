@@ -27,11 +27,12 @@ jobs:
         run: mkdir -p data
 
       - name: Download previous data artifact
-        uses: actions/download-artifact@v4
+        uses: dawidd6/action-download-artifact@v3
         with:
           name: tpl-scraper-data
           path: data/
-        continue-on-error: true # Don't fail if no previous data exists
+          if_no_artifact_found: ignore
+        continue-on-error: true
 
       - name: Build TypeScript
         run: npm run build
