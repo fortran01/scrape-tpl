@@ -1,0 +1,19 @@
+{
+  "name": "tpl-scraper-scripts",
+  "version": "1.0.0",
+  "description": "Utility scripts for TPL Scraper project",
+  "main": "index.js",
+  "scripts": {
+    "cleanup-gcr": "ts-node cleanup-gcr-images.ts",
+    "cleanup-gcr-untagged": "ts-node cleanup-gcr-images.ts --cleanup-untagged"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.5",
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  }
+} 
