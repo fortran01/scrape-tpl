@@ -16,6 +16,16 @@ interface RSSItem {
   record: any[];
 }
 
+interface ErrorDetails {
+  message: string;
+  statusCode?: number;
+  statusText?: string;
+  url?: string;
+  timestamp: string;
+  environment: string;
+  ip?: string;
+}
+
 class TPLScraper {
   private readonly RSS_URL = 'https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33162+37846&Ns=p_pub_date_sort&Nso=0';
   private readonly WORK_DIR = this.getWorkDir();
@@ -32,6 +42,37 @@ class TPLScraper {
     }
     // Default for local development
     return path.join(process.cwd(), 'data');
+  }
+
+  private getEnvironment(): string {
+    if (process.env.GITHUB_ACTIONS) {
+      return 'GitHub Actions';
+    }
+    if (process.env.FLY_APP_NAME || process.env.NODE_ENV === 'production') {
+      return 'Fly.io';
+    }
+    return 'Local Development';
+  }
+
+  private isProductionEnvironment(): boolean {
+    return process.env.GITHUB_ACTIONS === 'true' || 
+           !!process.env.FLY_APP_NAME || 
+           process.env.NODE_ENV === 'production';
+  }
+
+  private async fetchPublicIP(): Promise<string | null> {
+    try {
+      const response = await axios.get('https://ifconfig.me/ip', {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'TPL-Scraper/1.0'
+        }
+      });
+      return response.data.trim();
+    } catch (error) {
+      console.error('Failed to fetch public IP:', error);
+      return null;
+    }
   }
 
   constructor() {
@@ -86,13 +127,36 @@ class TPLScraper {
   }
 
   private async fetchRSSFeed(): Promise<string> {
-    const response = await axios.get(this.RSS_URL, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': 'application/xml,application/xhtml+xml,text/html,application/rss+xml'
+    try {
+      const response = await axios.get(this.RSS_URL, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0',
+          'Accept': 'application/xml,application/xhtml+xml,text/html,application/rss+xml'
+        },
+        timeout: 30000, // 30 second timeout
+        validateStatus: function (status) {
+          return status < 500; // Don't throw for 4xx errors, we want to handle them
+        }
+      });
+
+      if (response.status >= 400) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
       }
-    });
-    return response.data;
+
+      return response.data;
+    } catch (error) {
+      // Re-throw with enhanced error information
+      if (axios.isAxiosError(error)) {
+        const statusCode = error.response?.status;
+        const statusText = error.response?.statusText;
+        const enhancedError = new Error(`Failed to fetch RSS feed: ${error.message}`);
+        (enhancedError as any).statusCode = statusCode;
+        (enhancedError as any).statusText = statusText;
+        (enhancedError as any).url = this.RSS_URL;
+        throw enhancedError;
+      }
+      throw error;
+    }
   }
 
   private formatContent(items: RSSItem[], newEvents: Set<string>, removedEvents: Set<string>): string {
@@ -138,15 +202,131 @@ class TPLScraper {
     }
   }
 
-  private async sendEmail(content: string, isError: boolean = false): Promise<void> {
+  private async sendEmail(content: string, errorDetails?: ErrorDetails): Promise<void> {
     const date = new Date().toISOString().split('T')[0];
     
-    if (isError) {
+    if (errorDetails) {
+      const errorHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <style>
+              body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+              .error-container { 
+                  background-color: white; 
+                  padding: 20px; 
+                  border-radius: 8px; 
+                  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                  max-width: 800px;
+              }
+              .error-header { 
+                  color: #d32f2f; 
+                  border-bottom: 2px solid #d32f2f; 
+                  padding-bottom: 10px; 
+                  margin-bottom: 20px;
+              }
+              .error-details { 
+                  background-color: #fff3e0; 
+                  padding: 15px; 
+                  border-radius: 4px; 
+                  margin: 15px 0;
+                  border-left: 4px solid #ff9800;
+              }
+              .detail-row { 
+                  margin: 8px 0; 
+                  display: flex; 
+                  align-items: center;
+              }
+              .detail-label { 
+                  font-weight: bold; 
+                  min-width: 120px; 
+                  color: #333;
+              }
+              .detail-value { 
+                  color: #666; 
+                  font-family: monospace;
+                  background-color: #f5f5f5;
+                  padding: 2px 6px;
+                  border-radius: 3px;
+              }
+              .status-error { color: #d32f2f; font-weight: bold; }
+              .environment-badge {
+                  display: inline-block;
+                  padding: 4px 8px;
+                  border-radius: 12px;
+                  font-size: 12px;
+                  font-weight: bold;
+                  color: white;
+              }
+              .env-github { background-color: #24292e; }
+              .env-flyio { background-color: #8b5cf6; }
+              .env-local { background-color: #666; }
+          </style>
+      </head>
+      <body>
+          <div class="error-container">
+              <h2 class="error-header">🚨 TPL Scraper Error Report</h2>
+              
+              <div class="error-details">
+                  <div class="detail-row">
+                      <span class="detail-label">Environment:</span>
+                      <span class="environment-badge ${errorDetails.environment === 'GitHub Actions' ? 'env-github' : 
+                                                       errorDetails.environment === 'Fly.io' ? 'env-flyio' : 'env-local'}">
+                          ${errorDetails.environment}
+                      </span>
+                  </div>
+                  
+                  <div class="detail-row">
+                      <span class="detail-label">Timestamp:</span>
+                      <span class="detail-value">${errorDetails.timestamp}</span>
+                  </div>
+                  
+                  ${errorDetails.ip ? `
+                  <div class="detail-row">
+                      <span class="detail-label">Public IP:</span>
+                      <span class="detail-value">${errorDetails.ip}</span>
+                  </div>
+                  ` : ''}
+                  
+                  ${errorDetails.url ? `
+                  <div class="detail-row">
+                      <span class="detail-label">Target URL:</span>
+                      <span class="detail-value">${errorDetails.url}</span>
+                  </div>
+                  ` : ''}
+                  
+                  ${errorDetails.statusCode ? `
+                  <div class="detail-row">
+                      <span class="detail-label">HTTP Status:</span>
+                      <span class="detail-value status-error">${errorDetails.statusCode} ${errorDetails.statusText || ''}</span>
+                  </div>
+                  ` : ''}
+                  
+                  <div class="detail-row">
+                      <span class="detail-label">Error Message:</span>
+                      <span class="detail-value">${errorDetails.message}</span>
+                  </div>
+              </div>
+              
+              <p><strong>Next Steps:</strong></p>
+              <ul>
+                  <li>Check if the TPL RSS feed URL is still accessible: <a href="${this.RSS_URL}">${this.RSS_URL}</a></li>
+                  <li>Verify network connectivity from the ${errorDetails.environment} environment</li>
+                  ${errorDetails.statusCode && errorDetails.statusCode >= 500 ? 
+                    '<li>This appears to be a server-side error. The issue may resolve automatically.</li>' : ''}
+                  ${errorDetails.statusCode && errorDetails.statusCode >= 400 && errorDetails.statusCode < 500 ? 
+                    '<li>This appears to be a client-side error. The URL or request format may need updating.</li>' : ''}
+                  <li>Monitor subsequent runs to see if this is a persistent issue</li>
+              </ul>
+          </div>
+      </body>
+      </html>`;
+
       await this.transporter.sendMail({
         from: process.env.EMAIL_USER,
         to: process.env.EMAIL_TO,
-        subject: `TPL Scraper Error - ${date}`,
-        text: 'The scraper failed to fetch the RSS feed. Please check if the URL is still valid.'
+        subject: `🚨 TPL Scraper Error [${errorDetails.environment}] - ${date}`,
+        html: errorHtml
       });
       return;
     }
@@ -253,7 +433,41 @@ class TPLScraper {
       }
     } catch (error) {
       console.error('Error:', error);
-      await this.sendEmail('', true);
+      
+      // Enhanced error handling for production environments
+      if (this.isProductionEnvironment()) {
+        const errorDetails: ErrorDetails = {
+          message: error instanceof Error ? error.message : String(error),
+          timestamp: new Date().toISOString(),
+          environment: this.getEnvironment()
+        };
+
+        // Add HTTP status information if available
+        if (error && typeof error === 'object' && 'statusCode' in error) {
+          errorDetails.statusCode = (error as any).statusCode;
+          errorDetails.statusText = (error as any).statusText;
+          errorDetails.url = (error as any).url;
+        }
+
+        // Fetch public IP for diagnostic purposes
+        try {
+          const ip = await this.fetchPublicIP();
+          if (ip) {
+            errorDetails.ip = ip;
+          }
+        } catch (ipError) {
+          console.error('Failed to fetch IP for error report:', ipError);
+        }
+
+        await this.sendEmail('', errorDetails);
+      } else {
+        // For local development, use the simple error email
+        await this.sendEmail('', {
+          message: error instanceof Error ? error.message : String(error),
+          timestamp: new Date().toISOString(),
+          environment: this.getEnvironment()
+        });
+      }
     }
   }
 }
