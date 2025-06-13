@@ -393,19 +393,22 @@ class TPLScraper {
         return [];
       }
       
-      // Get event dates and times
+      // Get event dates, start times, and end times
       const eventDates: string[] = [];
-      const eventTimes: string[] = [];
+      const eventStartTimes: string[] = [];
+      const eventEndTimes: string[] = [];
       
       record.attributes[0].attr.forEach((attr: any) => {
         if (attr.$.name === 'p_event_date') {
           eventDates.push(attr._);
         } else if (attr.$.name === 'p_event_time') {
-          eventTimes.push(attr._);
+          eventStartTimes.push(attr._);
+        } else if (attr.$.name === 'p_event_endtime') {
+          eventEndTimes.push(attr._);
         }
       });
       
-      // If we have both dates and times, combine them
+      // Create date objects with start times (we'll use these for sorting and the main date display)
       const dates: Date[] = [];
       
       if (eventDates.length > 0) {
@@ -413,14 +416,19 @@ class TPLScraper {
           try {
             let fullDateTimeStr = dateStr;
             
-            // If we have a corresponding time, add it to the date
-            if (eventTimes.length > 0) {
-              const timeStr = eventTimes[index] || eventTimes[0]; // Use first time if not enough times
+            // If we have a corresponding start time, add it to the date
+            if (eventStartTimes.length > 0) {
+              const timeStr = eventStartTimes[index] || eventStartTimes[0]; // Use first time if not enough times
               fullDateTimeStr = `${dateStr}T${timeStr}:00`;
             }
             
             const parsedDate = new Date(fullDateTimeStr);
             if (!isNaN(parsedDate.getTime())) {
+              // Store the end time as a property on the date object for later use
+              if (eventEndTimes.length > 0) {
+                const endTime = eventEndTimes[index] || eventEndTimes[0];
+                (parsedDate as any).endTime = endTime;
+              }
               dates.push(parsedDate);
             }
           } catch (dateError) {
@@ -458,16 +466,32 @@ class TPLScraper {
       });
     };
 
+    const formatTimeRange = (date: Date): string => {
+      const startTime = formatTime(date);
+      const endTime = (date as any).endTime;
+      
+      if (endTime) {
+        // Parse the end time and format it
+        const endDate = new Date(date);
+        const [hours, minutes] = endTime.split(':');
+        endDate.setHours(parseInt(hours), parseInt(minutes));
+        const endTimeFormatted = formatTime(endDate);
+        return `${startTime} - ${endTimeFormatted}`;
+      }
+      
+      return startTime;
+    };
+
     if (dates.length === 1) {
       const date = dates[0];
       const dateStr = formatDate(date);
-      const timeStr = formatTime(date);
+      const timeStr = formatTimeRange(date);
       return `<div class="event-date">📅 ${dateStr} at ${timeStr}</div>`;
     } else {
       // Multiple dates - show them as a list
       const datesList = dates.map(date => {
         const dateStr = formatDate(date);
-        const timeStr = formatTime(date);
+        const timeStr = formatTimeRange(date);
         return `<li>${dateStr} at ${timeStr}</li>`;
       }).join('');
       
