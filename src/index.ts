@@ -18,8 +18,21 @@ interface RSSItem {
 
 class TPLScraper {
   private readonly RSS_URL = 'https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33162+37846&Ns=p_pub_date_sort&Nso=0';
-  private readonly WORK_DIR = process.env.NODE_ENV === 'production' ? '/app/data' : path.join(process.cwd(), 'data');
+  private readonly WORK_DIR = this.getWorkDir();
   private readonly transporter: nodemailer.Transporter;
+
+  private getWorkDir(): string {
+    // If running in GitHub Actions, use relative data directory
+    if (process.env.GITHUB_ACTIONS) {
+      return path.join(process.cwd(), 'data');
+    }
+    // If running in Docker (production), use /app/data
+    if (process.env.NODE_ENV === 'production') {
+      return '/app/data';
+    }
+    // Default for local development
+    return path.join(process.cwd(), 'data');
+  }
 
   constructor() {
     // Check if work directory exists and is writable
