@@ -160,6 +160,70 @@ npx ts-node src/index.ts
 npm run clear-db
 ```
 
+### Google Cloud Registry Cleanup
+
+For Google Cloud deployments, Docker images accumulate over time and can consume storage quota. The project includes a cleanup utility to manage old container images:
+
+**Prerequisites:**
+- Google Cloud CLI authenticated (`gcloud auth login`)
+- Pulumi configuration in place (`pulumi/Pulumi.dev.yaml`)
+
+**Step-by-step execution:**
+
+1. **Navigate to scripts directory and install dependencies:**
+   ```bash
+   cd scripts
+   npm install
+   ```
+
+2. **Run basic cleanup (keeps 5 most recent images):**
+   ```bash
+   npm run cleanup-gcr
+   ```
+
+3. **Run cleanup including untagged images:**
+   ```bash
+   npm run cleanup-gcr-untagged
+   ```
+
+4. **Run directly with TypeScript (alternative method):**
+   ```bash
+   # Basic cleanup
+   npx ts-node cleanup-gcr-images.ts
+   
+   # With untagged cleanup
+   npx ts-node cleanup-gcr-images.ts --cleanup-untagged
+   ```
+
+**Configuration options:**
+- `IMAGE_NAME` - Container image name (default: `tpl-scraper`)
+- `KEEP_COUNT` - Number of recent images to keep (default: `5`)
+- `REGISTRY` - Container registry (default: `gcr.io`)
+- `CLEANUP_UNTAGGED` - Set to `true` to automatically clean untagged images
+
+**Examples with custom settings:**
+```bash
+# Keep only 3 images instead of 5
+KEEP_COUNT=3 npm run cleanup-gcr
+
+# Clean up a different image
+IMAGE_NAME=my-custom-app npm run cleanup-gcr
+
+# Use Artifact Registry instead of Container Registry
+REGISTRY=us-central1-docker.pkg.dev npm run cleanup-gcr
+
+# Automatically clean untagged images without prompt
+CLEANUP_UNTAGGED=true npx ts-node cleanup-gcr-images.ts
+```
+
+**What the script does:**
+- Authenticates with Google Cloud
+- Lists all tagged container images for your project
+- Keeps the N most recent images (default: 5)
+- Deletes older images to free up storage
+- Optionally cleans up untagged images
+- Provides detailed output of what was deleted
+
 ### Updates
 
 **Google Cloud:**
@@ -184,6 +248,52 @@ flyctl machines run . --schedule daily --restart on-fail --region yyz
 - **[Neon](https://neon.tech/)** - Serverless PostgreSQL
 - **[Supabase](https://supabase.com/)** - Open source Firebase alternative
 - **[Railway](https://railway.app/)** - Simple deployment platform
+
+## Utility Scripts
+
+The `scripts/` directory contains additional utilities for managing the deployment:
+
+### Available Scripts
+
+- **`cleanup-gcr-images.ts`** - Google Cloud Registry cleanup tool
+  - Automatically removes old Docker images to save storage costs
+  - Configurable retention policy (default: keep 5 most recent)
+  - Handles both tagged and untagged images
+  - Reads configuration from Pulumi settings
+
+### How to Run Scripts
+
+1. **First-time setup:**
+   ```bash
+   cd scripts
+   npm install
+   ```
+
+2. **Available npm commands:**
+   ```bash
+   # Clean up old container images (keep 5 most recent)
+   npm run cleanup-gcr
+   
+   # Clean up old images including untagged ones
+   npm run cleanup-gcr-untagged
+   ```
+
+3. **Direct execution with ts-node:**
+   ```bash
+   cd scripts
+   npx ts-node cleanup-gcr-images.ts [options]
+   ```
+
+4. **Available options:**
+   - `--cleanup-untagged` - Also remove untagged images
+   - Environment variables: `IMAGE_NAME`, `KEEP_COUNT`, `REGISTRY`, `CLEANUP_UNTAGGED`
+
+### Supporting Files
+- **`package.json`** - Defines npm scripts and dependencies
+- **`tsconfig.json`** - TypeScript configuration for scripts
+- **`package-lock.json`** - Dependency lock file
+
+These scripts are particularly useful for Google Cloud deployments where container images can accumulate over time and consume storage quota.
 
 ## License
 
