@@ -1,16 +1,18 @@
 # Toronto Public Library New Items Scraper
 
-A TypeScript application that monitors the Toronto Public Library RSS feed for new items and sends email notifications when changes are detected. The application uses PostgreSQL for efficient data persistence and runs daily on various platforms with minimal database usage.
+A TypeScript application that monitors multiple Toronto Public Library RSS feeds for new items and sends email notifications when changes are detected. The application uses PostgreSQL for efficient data persistence and runs daily on various platforms with minimal database usage.
 
 ## Features
 
-- 🔍 Monitors TPL RSS feed for new items
+- 🔍 Monitors multiple TPL RSS feeds for new items
 - 📧 Sends beautifully formatted HTML emails with new items
 - 🆕 Shows summary of new and removed events
 - 📌 Highlights new events with badges
+- 🏢 Shows which branch each event is from
 - 🔄 Runs daily via scheduling (GitHub Actions, Fly.io, etc.)
 - 🗄️ PostgreSQL database for efficient data persistence
 - 🧹 Automatic data pruning to minimize database usage
+- ⚙️ Configurable feeds via JSON configuration file
 - 🚀 Containerized deployment
 - ⚡ Written in TypeScript for type safety
 
@@ -38,7 +40,38 @@ npm install
 3. Set up PostgreSQL database:
 Use a hosted PostgreSQL service (see PostgreSQL Hosting Options section below) and get your connection string.
 
-4. Create a `.env` file in the root directory:
+4. Create a configuration file:
+```bash
+# Copy the example configuration file
+cp config.example.json config.json
+```
+
+Then edit `config.json` to configure which RSS feeds to monitor:
+```json
+{
+  "feeds": [
+    {
+      "name": "Parkdale Branch",
+      "url": "https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33162+37846&Ns=p_pub_date_sort&Nso=0",
+      "enabled": true
+    },
+    {
+      "name": "High Park Branch", 
+      "url": "https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33132+37846&Ns=p_pub_date_sort&Nso=0",
+      "enabled": true
+    }
+  ],
+  "email": {
+    "subject_prefix": "TPL New Items",
+    "include_branch_name": true
+  },
+  "database": {
+    "prune_inactive_after_days": 30
+  }
+}
+```
+
+5. Create a `.env` file in the root directory:
 ```bash
 # Copy the example file and edit with your values
 cp .env.example .env
@@ -54,10 +87,38 @@ DATABASE_URL=postgresql://username:password@hostname:port/database_name
 
 Note: You'll need to generate an App Password for your Gmail account at https://myaccount.google.com/apppasswords
 
-5. Run the application:
+6. Run the application:
 ```bash
 npx ts-node src/index.ts
 ```
+
+## Configuration
+
+The application uses a `config.json` file to define which RSS feeds to monitor and other settings:
+
+### Feed Configuration
+
+Each feed in the `feeds` array has the following properties:
+- `name`: Display name for the branch/feed
+- `url`: RSS feed URL from the Toronto Public Library
+- `enabled`: Whether to monitor this feed (true/false)
+
+### Email Configuration
+
+- `subject_prefix`: Prefix for email subjects
+- `include_branch_name`: Whether to include branch information in the subject
+
+### Database Configuration
+
+- `prune_inactive_after_days`: Number of days to keep inactive items before pruning
+
+### Finding RSS Feed URLs
+
+To find RSS feed URLs for other TPL branches:
+1. Go to the Toronto Public Library website
+2. Navigate to the branch's events page
+3. Look for RSS feed links or use the RSS feed builder
+4. The URL format is typically: `https://www.torontopubliclibrary.ca/rss.jsp?N=<parameters>`
 
 ## Database Management
 
@@ -194,6 +255,8 @@ The application sends HTML-formatted emails that include:
 ## Project Structure
 
 - `src/index.ts` - Main application code with PostgreSQL integration
+- `config.json` - Configuration file for RSS feeds and settings
+- `config.example.json` - Example configuration file
 - `scripts/` - Utility scripts
   - `init-db.sql` - PostgreSQL database initialization script
   - `upload-secrets.sh` - Bash script to upload .env secrets to GitHub
