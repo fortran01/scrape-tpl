@@ -1,0 +1,30 @@
+# Pulumi
+Pulumi.*.yaml
+.pulumi/
+
+# Pulumi backend state (when using local backend)
+.pulumi/
+*.pulumi/
+
+# Temporary files
+lifecycle.json
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript
+*.tsbuildinfo
+bin/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db 
