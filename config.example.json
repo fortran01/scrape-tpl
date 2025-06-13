@@ -1,0 +1,21 @@
+{
+  "feeds": [
+    {
+      "name": "Parkdale Branch",
+      "url": "https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33162+37846&Ns=p_pub_date_sort&Nso=0",
+      "enabled": true
+    },
+    {
+      "name": "High Park Branch", 
+      "url": "https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33132+37846&Ns=p_pub_date_sort&Nso=0",
+      "enabled": true
+    }
+  ],
+  "email": {
+    "subject_prefix": "TPL New Items",
+    "include_branch_name": true
+  },
+  "database": {
+    "prune_inactive_after_days": 30
+  }
+} 

@@ -3,6 +3,8 @@ import * as xml2js from 'xml2js';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import { Pool, PoolClient } from 'pg';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -15,6 +17,10 @@ interface RSSItem {
   record: any[];
 }
 
+interface RSSItemWithFeed extends RSSItem {
+  feedName: string;
+}
+
 interface ErrorDetails {
   message: string;
   statusCode?: number;
@@ -23,6 +29,23 @@ interface ErrorDetails {
   timestamp: string;
   environment: string;
   ip?: string;
+}
+
+interface FeedConfig {
+  name: string;
+  url: string;
+  enabled: boolean;
+}
+
+interface Config {
+  feeds: FeedConfig[];
+  email: {
+    subject_prefix: string;
+    include_branch_name: boolean;
+  };
+  database: {
+    prune_inactive_after_days: number;
+  };
 }
 
 interface DBRSSItem {
@@ -36,12 +59,13 @@ interface DBRSSItem {
   first_seen: Date;
   last_seen: Date;
   is_active: boolean;
+  feed_name: string;
 }
 
 class TPLScraper {
-  private readonly RSS_URL = 'https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33162+37846&Ns=p_pub_date_sort&Nso=0';
   private readonly transporter: nodemailer.Transporter;
   private readonly pool: Pool;
+  private readonly config: Config;
 
   private getEnvironment(): string {
     if (process.env.GITHUB_ACTIONS) {
@@ -74,6 +98,37 @@ class TPLScraper {
     }
   }
 
+  private loadConfig(): Config {
+    const configPath = path.join(process.cwd(), 'config.json');
+    
+    if (!fs.existsSync(configPath)) {
+      throw new Error(`Configuration file not found at ${configPath}. Please create it based on config.example.json`);
+    }
+
+    try {
+      const configContent = fs.readFileSync(configPath, 'utf8');
+      const config = JSON.parse(configContent) as Config;
+      
+      // Validate configuration
+      if (!config.feeds || !Array.isArray(config.feeds) || config.feeds.length === 0) {
+        throw new Error('Configuration must contain at least one feed');
+      }
+
+      const enabledFeeds = config.feeds.filter(feed => feed.enabled);
+      if (enabledFeeds.length === 0) {
+        throw new Error('At least one feed must be enabled');
+      }
+
+      console.log(`Loaded configuration with ${config.feeds.length} feeds (${enabledFeeds.length} enabled)`);
+      return config;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(`Invalid JSON in configuration file: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
   constructor() {
     if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
       throw new Error('EMAIL_USER and EMAIL_PASS environment variables must be set');
@@ -83,6 +138,9 @@ class TPLScraper {
     if (!process.env.DATABASE_URL) {
       throw new Error('DATABASE_URL environment variable must be set');
     }
+
+    // Load configuration
+    this.config = this.loadConfig();
 
     this.pool = new Pool({
       connectionString: process.env.DATABASE_URL,
@@ -110,17 +168,19 @@ class TPLScraper {
       await client.query(`
         CREATE TABLE IF NOT EXISTS rss_items (
           id SERIAL PRIMARY KEY,
-          title VARCHAR(500) NOT NULL UNIQUE,
+          title VARCHAR(500) NOT NULL,
           link VARCHAR(1000) NOT NULL,
           description TEXT,
           content_encoded TEXT,
           record_data JSONB,
           event_dates TIMESTAMP WITH TIME ZONE[],
+          feed_name VARCHAR(100) NOT NULL,
           first_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
           last_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
           is_active BOOLEAN DEFAULT TRUE,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          UNIQUE(title, feed_name)
         );
       `);
 
@@ -130,11 +190,45 @@ class TPLScraper {
         ADD COLUMN IF NOT EXISTS event_dates TIMESTAMP WITH TIME ZONE[];
       `);
 
+      // Add feed_name column if it doesn't exist (for existing databases)
+      await client.query(`
+        ALTER TABLE rss_items 
+        ADD COLUMN IF NOT EXISTS feed_name VARCHAR(100) DEFAULT 'Parkdale Branch';
+      `);
+
+      // Update existing records to have feed_name if they don't
+      await client.query(`
+        UPDATE rss_items 
+        SET feed_name = 'Parkdale Branch' 
+        WHERE feed_name IS NULL OR feed_name = '';
+      `);
+
+      // Drop the old unique constraint if it exists and create the new one
+      await client.query(`
+        ALTER TABLE rss_items 
+        DROP CONSTRAINT IF EXISTS rss_items_title_key;
+      `);
+
+      // Add the new unique constraint if it doesn't exist
+      await client.query(`
+        DO $$ 
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint 
+            WHERE conname = 'rss_items_title_feed_name_key'
+          ) THEN
+            ALTER TABLE rss_items 
+            ADD CONSTRAINT rss_items_title_feed_name_key UNIQUE (title, feed_name);
+          END IF;
+        END $$;
+      `);
+
       // Create index for performance
       await client.query(`
-        CREATE INDEX IF NOT EXISTS idx_rss_items_title ON rss_items(title);
+        CREATE INDEX IF NOT EXISTS idx_rss_items_title_feed ON rss_items(title, feed_name);
         CREATE INDEX IF NOT EXISTS idx_rss_items_active ON rss_items(is_active);
         CREATE INDEX IF NOT EXISTS idx_rss_items_last_seen ON rss_items(last_seen);
+        CREATE INDEX IF NOT EXISTS idx_rss_items_feed_name ON rss_items(feed_name);
       `);
 
       console.log('Database initialized successfully');
@@ -146,9 +240,9 @@ class TPLScraper {
     }
   }
 
-  private async fetchRSSFeed(): Promise<string> {
+  private async fetchRSSFeed(url: string): Promise<string> {
     try {
-      const response = await axios.get(this.RSS_URL, {
+      const response = await axios.get(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0',
           'Accept': 'application/xml,application/xhtml+xml,text/html,application/rss+xml'
@@ -172,7 +266,7 @@ class TPLScraper {
         const enhancedError = new Error(`Failed to fetch RSS feed: ${error.message}`);
         (enhancedError as any).statusCode = statusCode;
         (enhancedError as any).statusText = statusText;
-        (enhancedError as any).url = this.RSS_URL;
+        (enhancedError as any).url = url;
         throw enhancedError;
       }
       throw error;
@@ -191,14 +285,15 @@ class TPLScraper {
     }
   }
 
-  private async upsertRSSItems(items: RSSItem[]): Promise<{ newItems: string[], removedItems: string[] }> {
+  private async upsertRSSItems(items: RSSItem[], feedName: string): Promise<{ newItems: string[], removedItems: string[] }> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
 
-      // Get current active items
+      // Get current active items for this feed
       const currentActiveResult = await client.query(
-        'SELECT title FROM rss_items WHERE is_active = TRUE'
+        'SELECT title FROM rss_items WHERE is_active = TRUE AND feed_name = $1',
+        [feedName]
       );
       const currentActiveTitles = new Set(currentActiveResult.rows.map((row: any) => row.title));
 
@@ -232,9 +327,9 @@ class TPLScraper {
 
         // Upsert the item
         await client.query(`
-          INSERT INTO rss_items (title, link, description, content_encoded, record_data, event_dates, last_seen, is_active)
-          VALUES ($1, $2, $3, $4, $5, $6, NOW(), TRUE)
-          ON CONFLICT (title) 
+          INSERT INTO rss_items (title, link, description, content_encoded, record_data, event_dates, feed_name, last_seen, is_active)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), TRUE)
+          ON CONFLICT (title, feed_name) 
           DO UPDATE SET 
             link = EXCLUDED.link,
             description = EXCLUDED.description,
@@ -244,7 +339,7 @@ class TPLScraper {
             last_seen = NOW(),
             is_active = TRUE,
             updated_at = NOW()
-        `, [title, link, description, contentEncoded, recordData, eventDates]);
+        `, [title, link, description, contentEncoded, recordData, eventDates, feedName]);
       }
 
       // Mark items as inactive if they're no longer in the feed
@@ -253,8 +348,8 @@ class TPLScraper {
         if (!currentItemTitles.has(activeTitle)) {
           removedItemTitles.push(activeTitle);
           await client.query(
-            'UPDATE rss_items SET is_active = FALSE, updated_at = NOW() WHERE title = $1',
-            [activeTitle]
+            'UPDATE rss_items SET is_active = FALSE, updated_at = NOW() WHERE title = $1 AND feed_name = $2',
+            [activeTitle, feedName]
           );
         }
       }
@@ -273,11 +368,12 @@ class TPLScraper {
   private async pruneOldData(): Promise<void> {
     const client = await this.pool.connect();
     try {
-      // Keep only last 30 days of inactive items to minimize DB usage
+      // Keep only last N days of inactive items to minimize DB usage
+      const pruneDays = this.config.database.prune_inactive_after_days;
       const result = await client.query(`
         DELETE FROM rss_items 
         WHERE is_active = FALSE 
-        AND last_seen < NOW() - INTERVAL '30 days'
+        AND last_seen < NOW() - INTERVAL '${pruneDays} days'
       `);
       
       if (result.rowCount && result.rowCount > 0) {
@@ -329,7 +425,7 @@ class TPLScraper {
     return true;
   }
 
-  private formatContent(items: RSSItem[], newEvents: Set<string>, removedEvents: Set<string>): string {
+  private formatContent(items: RSSItemWithFeed[], newEvents: Set<string>, removedEvents: Set<string>): string {
     const changeSummary = [];
     if (newEvents.size > 0) {
       changeSummary.push(`<h3>🆕 New Events:</h3><ul>${Array.from(newEvents).map(title => `<li>${title}</li>`).join('')}</ul>`);
@@ -351,13 +447,14 @@ class TPLScraper {
       
       const isNew = newEvents.has(title);
       const badge = isNew ? '<span style="background-color: #4CAF50; color: white; padding: 2px 6px; border-radius: 3px; margin-left: 8px;">New</span>' : '';
+      const feedBadge = `<span style="background-color: #2B4C7E; color: white; padding: 2px 6px; border-radius: 3px; margin-left: 8px; font-size: 0.8em;">${item.feedName}</span>`;
       
       // Get and format event dates
       const eventDates = this.getEventDates(item);
       const formattedDates = this.formatEventDates(eventDates);
       
       return `<div class="item">
-        <h3><a href="${link}">${title}</a>${badge}</h3>
+        <h3><a href="${link}">${title}</a>${badge}${feedBadge}</h3>
         ${formattedDates}
         ${content}
         <div class="clearfix"></div>
@@ -610,7 +707,7 @@ class TPLScraper {
               
               <p><strong>Next Steps:</strong></p>
               <ul>
-                  <li>Check if the TPL RSS feed URL is still accessible: <a href="${this.RSS_URL}">${this.RSS_URL}</a></li>
+                  <li>Check if the TPL RSS feed URLs are still accessible</li>
                   <li>Verify network connectivity from the ${errorDetails.environment} environment</li>
                   <li>Check database connectivity and credentials</li>
                   ${errorDetails.statusCode && errorDetails.statusCode >= 500 ? 
@@ -705,10 +802,14 @@ class TPLScraper {
     </body>
     </html>`;
 
+    const subject = this.config.email.include_branch_name 
+      ? `${this.config.email.subject_prefix} - Multiple Branches - ${date}`
+      : `${this.config.email.subject_prefix} - ${date}`;
+
     await this.transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: process.env.EMAIL_TO,
-      subject: `TPL New Items - ${date}`,
+      subject: subject,
       html: htmlContent
     });
   }
@@ -736,36 +837,61 @@ class TPLScraper {
       // Prune old data to keep DB minimal
       await this.pruneOldData();
 
-      const rssContent = await this.fetchRSSFeed();
+      // Process each enabled feed
+      const enabledFeeds = this.config.feeds.filter(feed => feed.enabled);
+      const allNewEvents = new Set<string>();
+      const allRemovedEvents = new Set<string>();
+      const allCurrentItems: RSSItemWithFeed[] = [];
 
-      if (rssContent) {
-        const parser = new xml2js.Parser();
-        const currentResult = await parser.parseStringPromise(rssContent);
-        const currentItems: RSSItem[] = currentResult.rss.channel[0].item;
+      for (const feed of enabledFeeds) {
+        console.log(`Processing feed: ${feed.name}`);
         
-        // Get current items from database and update with new feed data
-        const { newItems, removedItems } = await this.upsertRSSItems(currentItems);
+        try {
+          const rssContent = await this.fetchRSSFeed(feed.url);
 
-        const newEvents = new Set(newItems);
-        const removedEvents = new Set(removedItems);
+          if (rssContent) {
+            const parser = new xml2js.Parser();
+            const currentResult = await parser.parseStringPromise(rssContent);
+            const currentItems: RSSItem[] = currentResult.rss.channel[0].item;
+            
+            // Get current items from database and update with new feed data
+            const { newItems, removedItems } = await this.upsertRSSItems(currentItems, feed.name);
 
-        // Check if this is the first run (no previous data)
-        const dbItems = await this.getCurrentItemsFromDB();
-        const isFirstRun = dbItems.length === currentItems.length && newItems.length === currentItems.length;
+            // Add to overall tracking
+            newItems.forEach(item => allNewEvents.add(item));
+            removedItems.forEach(item => allRemovedEvents.add(item));
+            
+            // Add feed name to items for display
+            const itemsWithFeed: RSSItemWithFeed[] = currentItems.map(item => ({
+              ...item,
+              feedName: feed.name
+            }));
+            allCurrentItems.push(...itemsWithFeed);
 
-        if (newEvents.size > 0 || removedEvents.size > 0) {
-          console.log(`Changes detected - New: ${newEvents.size}, Removed: ${removedEvents.size}`);
-          const formattedContent = this.formatContent(currentItems, newEvents, removedEvents);
-          await this.sendEmail(formattedContent);
-        } else if (isFirstRun) {
-          console.log('First run detected - sending initial email with all items');
-          const formattedContent = this.formatContent(currentItems, new Set(), new Set());
-          await this.sendEmail(formattedContent);
-        } else {
-          console.log('No changes detected');
+            console.log(`Feed ${feed.name}: ${newItems.length} new, ${removedItems.length} removed`);
+          } else {
+            console.warn(`Empty RSS content received for feed: ${feed.name}`);
+          }
+        } catch (feedError) {
+          console.error(`Error processing feed ${feed.name}:`, feedError);
+          // Continue with other feeds even if one fails
         }
+      }
+
+      // Check if this is the first run (no previous data)
+      const dbItems = await this.getCurrentItemsFromDB();
+      const isFirstRun = dbItems.length === allCurrentItems.length && allNewEvents.size === allCurrentItems.length;
+
+      if (allNewEvents.size > 0 || allRemovedEvents.size > 0) {
+        console.log(`Overall changes detected - New: ${allNewEvents.size}, Removed: ${allRemovedEvents.size}`);
+        const formattedContent = this.formatContent(allCurrentItems, allNewEvents, allRemovedEvents);
+        await this.sendEmail(formattedContent);
+      } else if (isFirstRun) {
+        console.log('First run detected - sending initial email with all items');
+        const formattedContent = this.formatContent(allCurrentItems, new Set(), new Set());
+        await this.sendEmail(formattedContent);
       } else {
-        throw new Error('Empty RSS content received');
+        console.log('No changes detected across all feeds');
       }
     } catch (error) {
       console.error('Error:', error);
@@ -837,6 +963,10 @@ if (require.main === module) {
     console.log('  EMAIL_TO                     Recipient email address');
     console.log('  DATABASE_URL                 PostgreSQL connection string');
     console.log('  CONFIRM_CLEAR_DB             Set to "true" to allow clearing in production');
+    console.log('');
+    console.log('Configuration:');
+    console.log('  config.json                  JSON file defining RSS feeds and settings');
+    console.log('  config.example.json          Example configuration file');
     console.log('');
     process.exit(0);
   }
