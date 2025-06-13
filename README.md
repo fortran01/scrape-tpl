@@ -59,6 +59,20 @@ Note: You'll need to generate an App Password for your Gmail account at https://
 npx ts-node src/index.ts
 ```
 
+## Database Management
+
+### Clearing the Database
+
+If you need to start fresh and clear all data from the database:
+
+```bash
+npm run clear-db
+```
+
+This runs an interactive script with safety checks and confirmations.
+
+**⚠️ Warning:** Clearing the database permanently deletes all stored RSS items and cannot be undone. In production environments, you must set `CONFIRM_CLEAR_DB=true` to proceed.
+
 ## Deployment Options
 
 ### Option 1: GitHub Actions (Recommended)
