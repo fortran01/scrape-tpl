@@ -13,7 +13,7 @@
             line-height: 1.6;
         }
         .container { 
-            max-width: 1200px; 
+            max-width: 1400px; 
             margin: 0 auto; 
             background: white; 
             border-radius: 8px; 
@@ -40,6 +40,7 @@
             flex-wrap: wrap;
         }
         .stats-left { font-size: 1.1em; color: #2B4C7E; font-weight: 600; }
+        .stats-right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
         .stats-right a { 
             color: #2B4C7E; 
             text-decoration: none; 
@@ -47,75 +48,227 @@
             border: 2px solid #2B4C7E; 
             border-radius: 20px; 
             transition: all 0.3s ease;
+            font-size: 0.9em;
         }
         .stats-right a:hover { 
             background: #2B4C7E; 
             color: white; 
         }
-        .month-section { margin-bottom: 40px; }
-        .month-title { 
-            color: #2B4C7E; 
-            border-bottom: 3px solid #2B4C7E; 
-            padding-bottom: 15px; 
-            margin-bottom: 25px; 
-            font-size: 1.8em;
-            font-weight: 600;
+        
+        /* Month Navigation */
+        .month-navigation {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 30px;
+            gap: 20px;
         }
-        .event-card { 
-            border: 1px solid #e0e0e0; 
-            border-radius: 8px; 
-            margin-bottom: 20px; 
-            padding: 20px; 
-            background: white; 
+        .nav-button {
+            background: #2B4C7E;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1em;
             transition: all 0.3s ease;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
-        .event-card:hover { 
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
+        .nav-button:hover {
+            background: #1a3a5c;
             transform: translateY(-2px);
         }
-        .event-title { 
-            margin-bottom: 12px; 
-            font-weight: 600; 
-            font-size: 1.2em;
+        .nav-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
         }
-        .event-title a { 
-            color: #2B4C7E; 
-            text-decoration: none; 
-            transition: color 0.3s ease;
+        .current-month {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #2B4C7E;
+            min-width: 200px;
+            text-align: center;
         }
-        .event-title a:hover { color: #1a3a5c; }
-        .event-meta { 
-            color: #666; 
-            font-size: 0.9em; 
-            margin-bottom: 15px; 
-            display: flex; 
-            align-items: center; 
-            flex-wrap: wrap; 
-            gap: 10px;
+        
+        /* Calendar View Styles */
+        .calendar-month { 
+            background: white; 
+            border-radius: 8px; 
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
-        .branch-tag { 
+        .calendar-header { 
             background: #2B4C7E; 
             color: white; 
-            padding: 6px 12px; 
-            border-radius: 15px; 
-            font-size: 0.8em; 
-            font-weight: 500;
-        }
-        .event-date { 
-            background: linear-gradient(135deg, #e8f4f8 0%, #d1e7f0 100%); 
-            padding: 12px 16px; 
-            border-radius: 6px; 
-            margin: 12px 0; 
-            color: #2B4C7E; 
+            padding: 20px; 
+            text-align: center; 
+            font-size: 1.5em; 
             font-weight: 600;
-            border-left: 4px solid #2B4C7E;
         }
-        .event-description { 
-            margin-top: 15px; 
-            line-height: 1.6; 
+        .calendar-grid { 
+            display: grid; 
+            grid-template-columns: repeat(7, 1fr); 
+        }
+        .calendar-day-header { 
+            background: #f8f9fa; 
+            padding: 15px 10px; 
+            text-align: center; 
+            font-weight: 600; 
+            color: #2B4C7E; 
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 0.9em;
+        }
+        .calendar-day { 
+            min-height: 120px; 
+            border-right: 1px solid #e0e0e0; 
+            border-bottom: 1px solid #e0e0e0; 
+            padding: 8px; 
+            position: relative;
+            background: white;
+        }
+        .calendar-day:nth-child(7n) { border-right: none; }
+        .calendar-day.other-month { 
+            background: #f8f9fa; 
+            color: #999; 
+        }
+        .calendar-day-number { 
+            font-weight: 600; 
+            margin-bottom: 5px; 
+            color: #2B4C7E;
+        }
+        .calendar-day.other-month .calendar-day-number { 
+            color: #ccc; 
+        }
+        .calendar-event { 
+            background: #2B4C7E; 
+            color: white; 
+            padding: 2px 6px; 
+            border-radius: 3px; 
+            font-size: 0.75em; 
+            margin-bottom: 2px; 
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+            white-space: nowrap;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        .calendar-event:hover { 
+            background: #1a3a5c; 
+            transform: scale(1.02);
+            z-index: 10;
+        }
+        .calendar-event-count { 
+            background: #dc3545; 
+            color: white; 
+            padding: 1px 5px; 
+            border-radius: 10px; 
+            font-size: 0.7em; 
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-top: 2px;
+        }
+        .calendar-event-count:hover { 
+            background: #c82333; 
+            transform: scale(1.05);
+        }
+        
+
+        
+        /* Expanded Events Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        .modal-content {
+            background-color: white;
+            margin: 5% auto;
+            padding: 0;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        .modal-header {
+            background: #2B4C7E;
+            color: white;
+            padding: 20px;
+            border-radius: 8px 8px 0 0;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1.3em;
+        }
+        .close {
+            color: white;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .close:hover {
+            opacity: 0.7;
+        }
+        .modal-body {
+            padding: 20px;
+        }
+        .modal-event {
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 15px;
+            transition: all 0.2s ease;
+        }
+        .modal-event:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .modal-event-title {
+            font-weight: 600;
+            color: #2B4C7E;
+            margin-bottom: 8px;
+        }
+        .modal-event-title a {
+            color: #2B4C7E;
+            text-decoration: none;
+        }
+        .modal-event-title a:hover {
+            text-decoration: underline;
+        }
+        .modal-event-meta {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 8px;
+        }
+        .modal-event-date {
+            background: #e8f4f8;
+            color: #2B4C7E;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            display: inline-block;
+            margin-bottom: 8px;
+        }
+        .modal-event-description {
             color: #444;
+            line-height: 1.5;
+            font-size: 0.9em;
         }
+        
         .no-events { 
             text-align: center; 
             color: #666; 
@@ -131,7 +284,20 @@
             .header h1 { font-size: 2em; }
             .content { padding: 20px; }
             .stats { flex-direction: column; gap: 15px; text-align: center; }
-            .event-meta { flex-direction: column; align-items: flex-start; }
+            .stats-right { justify-content: center; }
+            .calendar-day { min-height: 80px; padding: 4px; }
+            .calendar-event { font-size: 0.7em; padding: 1px 4px; }
+            .modal-content { width: 95%; margin: 10% auto; }
+            .month-navigation { flex-direction: column; gap: 15px; }
+            .current-month { min-width: auto; }
+
+        }
+        
+        @media (max-width: 480px) {
+            .calendar-day { min-height: 60px; }
+            .calendar-day-number { font-size: 0.8em; }
+            .calendar-event { font-size: 0.65em; }
+
         }
     </style>
 </head>
@@ -165,43 +331,213 @@
                     <p>Check back later for new events and programs!</p>
                 </div>
             <% } else { %>
-                <% groupedItems.forEach((monthItems, monthName) => { %>
-                    <div class="month-section">
-                        <h2 class="month-title">📅 <%= monthName %></h2>
-                        <% monthItems.forEach(item => { %>
-                            <div class="event-card">
-                                <h3 class="event-title">
-                                    <a href="<%= item.link %>" target="_blank" rel="noopener noreferrer">
-                                        <%= item.title %>
-                                    </a>
-                                </h3>
-                                <div class="event-meta">
-                                    <span class="branch-tag"><%= item.feed_name %></span>
-                                    <span>Added: <%= new Date(item.first_seen).toLocaleDateString('en-US', { 
-                                        timeZone: 'America/Toronto',
-                                        year: 'numeric',
-                                        month: 'short',
-                                        day: 'numeric'
-                                    }) %></span>
+                <!-- Month Navigation -->
+                <div class="month-navigation">
+                    <button class="nav-button" id="prevMonth" onclick="changeMonth(-1)">
+                        ← Previous
+                    </button>
+                    <div class="current-month" id="currentMonthDisplay">
+                        <%= calendarMonths[0]?.monthName || 'No Events' %>
+                    </div>
+                    <button class="nav-button" id="nextMonth" onclick="changeMonth(1)">
+                        Next →
+                    </button>
+                </div>
+
+                <!-- Calendar View -->
+                <% calendarMonths.forEach((month, index) => { %>
+                    <div class="calendar-month" id="month-<%= index %>" style="<%= index === 0 ? '' : 'display: none;' %>">
+                        <div class="calendar-header">
+                            📅 <%= month.monthName %>
+                        </div>
+                        <div class="calendar-grid">
+                            <!-- Day headers -->
+                            <div class="calendar-day-header">Sun</div>
+                            <div class="calendar-day-header">Mon</div>
+                            <div class="calendar-day-header">Tue</div>
+                            <div class="calendar-day-header">Wed</div>
+                            <div class="calendar-day-header">Thu</div>
+                            <div class="calendar-day-header">Fri</div>
+                            <div class="calendar-day-header">Sat</div>
+                            
+                            <!-- Calendar days -->
+                            <% month.days.forEach(day => { %>
+                                <div class="calendar-day <%= !day.isCurrentMonth ? 'other-month' : '' %>">
+                                    <div class="calendar-day-number"><%= day.date %></div>
+                                    <% if (day.events.length > 0) { %>
+                                        <% const visibleEvents = day.events.slice(0, 3); %>
+                                        <% visibleEvents.forEach(event => { %>
+                                                                        <div class="calendar-event" 
+                                 onclick="window.open('<%= event.link %>', '_blank')"
+                                 style="cursor: pointer;"
+                                 title="<%= event.title %> - Click to view details">
+                                                <%= event.title.length > 15 ? event.title.substring(0, 15) + '...' : event.title %> 
+                                                [<%= createBranchAcronym(event.feed_name) %>]
+                                            </div>
+                                        <% }); %>
+                                        <% if (day.events.length > 3) { %>
+                                            <div class="calendar-event-count" 
+                                                 onclick="showAllEvents('<%= day.fullDate.toISOString() %>', '<%= formatEventDate(day.fullDate) %>')">
+                                                +<%= day.events.length - 3 %> more
+                                            </div>
+                                        <% } %>
+                                    <% } %>
                                 </div>
-                                <% if (item.event_dates && item.event_dates.length > 0) { %>
-                                    <% item.event_dates.forEach(date => { %>
-                                        <div class="event-date">
-                                            🗓️ <%= formatEventDate(new Date(date)) %>
-                                        </div>
-                                    <% }); %>
-                                <% } %>
-                                <% if (item.description) { %>
-                                    <div class="event-description">
-                                        <%- item.description %>
-                                    </div>
-                                <% } %>
-                            </div>
-                        <% }); %>
+                            <% }); %>
+                        </div>
                     </div>
                 <% }); %>
             <% } %>
         </div>
     </div>
+
+
+
+    <!-- Modal for expanded events -->
+    <div id="eventsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="close" onclick="closeModal()">&times;</span>
+                <h3 id="modalTitle">Events</h3>
+            </div>
+            <div class="modal-body" id="modalBody">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Store all events data for modal display
+        const allEventsData = <%- JSON.stringify(
+            (() => {
+                const data = {};
+                calendarMonths.forEach(month => {
+                    month.days.forEach(day => {
+                        if (day.events.length > 0) {
+                            data[day.fullDate.toISOString()] = day.events.map(event => ({
+                                title: event.title,
+                                branch: event.feed_name,
+                                link: event.link,
+                                description: event.description || '',
+                                dates: event.event_dates ? event.event_dates.map(date => formatEventDate(new Date(date))) : []
+                            }));
+                        }
+                    });
+                });
+                return data;
+            })()
+        ) %>;
+
+        // Month navigation
+        const monthNames = [<% calendarMonths.forEach((month, index) => { %>"<%= month.monthName %>"<%= index < calendarMonths.length - 1 ? ',' : '' %><% }); %>];
+        let currentMonthIndex = 0;
+
+        function changeMonth(direction) {
+            const newIndex = currentMonthIndex + direction;
+            if (newIndex >= 0 && newIndex < monthNames.length) {
+                // Hide current month
+                document.getElementById(`month-${currentMonthIndex}`).style.display = 'none';
+                
+                // Show new month
+                currentMonthIndex = newIndex;
+                document.getElementById(`month-${currentMonthIndex}`).style.display = 'block';
+                
+                // Update navigation
+                document.getElementById('currentMonthDisplay').textContent = monthNames[currentMonthIndex];
+                document.getElementById('prevMonth').disabled = currentMonthIndex === 0;
+                document.getElementById('nextMonth').disabled = currentMonthIndex === monthNames.length - 1;
+                
+
+            }
+        }
+
+        // Initialize navigation buttons
+        document.getElementById('prevMonth').disabled = currentMonthIndex === 0;
+        document.getElementById('nextMonth').disabled = currentMonthIndex === monthNames.length - 1;
+
+
+
+        // Modal functionality
+        function showAllEvents(dateKey, formattedDate) {
+            const events = allEventsData[dateKey];
+            if (!events) return;
+
+            document.getElementById('modalTitle').textContent = `Events on ${formattedDate}`;
+            
+            const modalBody = document.getElementById('modalBody');
+            modalBody.innerHTML = events.map(event => `
+                <div class="modal-event">
+                    <div class="modal-event-title">
+                        <a href="${event.link}" target="_blank">${event.title}</a>
+                    </div>
+                    <div class="modal-event-meta">
+                        <strong>${event.branch}</strong> [${createBranchAcronymJS(event.branch)}]
+                    </div>
+                    ${event.dates.map(date => `<div class="modal-event-date">🗓️ ${date}</div>`).join('')}
+                    ${event.description ? `<div class="modal-event-description">${event.description}</div>` : ''}
+                </div>
+            `).join('');
+            
+            document.getElementById('eventsModal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('eventsModal').style.display = 'none';
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('eventsModal');
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+        }
+
+        // JavaScript version of branch acronym function
+        function createBranchAcronymJS(branchName) {
+            const cleanName = branchName.replace(/\s+Branch$/i, '').trim();
+            
+            const specialCases = {
+                'Bloor/Gladstone': 'BG',
+                'High Park': 'HP',
+                'Parkdale': 'PD',
+                'North York Central': 'NYC',
+                'Scarborough Civic Centre': 'SCC',
+                'Toronto Reference Library': 'TRL',
+                'Fort York': 'FY',
+                'St. Lawrence': 'SL',
+                'Beaches': 'BCH',
+                'Danforth/Coxwell': 'DC',
+                'Gerrard/India Bazaar': 'GIB',
+                'Lillian H. Smith': 'LHS',
+                'Maria A. Shchuka': 'MAS',
+                'Northern District': 'ND',
+                'Palmerston': 'PAL',
+                'Riverdale': 'RVD',
+                'Runnymede': 'RUN',
+                'S. Walter Stewart': 'SWS',
+                'Sanderson': 'SAN',
+                'Spadina Road': 'SPD',
+                'St. Clair/Silverthorn': 'SCS',
+                'Weston': 'WST',
+                'Woodside Square': 'WSQ',
+                'York Woods': 'YW'
+            };
+            
+            if (specialCases[cleanName]) {
+                return specialCases[cleanName];
+            }
+            
+            const words = cleanName.split(/[\s\/\-]+/).filter(word => word.length > 0);
+            if (words.length === 1) {
+                return words[0].substring(0, 3).toUpperCase();
+            }
+            
+            return words
+                .filter(word => !['and', 'the', 'of', 'at', 'in', 'on'].includes(word.toLowerCase()))
+                .map(word => word.charAt(0).toUpperCase())
+                .join('')
+                .substring(0, 3);
+        }
+    </script>
 </body>
 </html> 

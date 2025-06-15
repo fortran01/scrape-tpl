@@ -109,6 +109,151 @@ function groupItemsByMonth(items: DBRSSItem[]): Map<string, DBRSSItem[]> {
   return grouped;
 }
 
+interface CalendarDay {
+  date: number;
+  isCurrentMonth: boolean;
+  events: DBRSSItem[];
+  fullDate: Date;
+}
+
+interface CalendarMonth {
+  year: number;
+  month: number;
+  monthName: string;
+  days: CalendarDay[];
+}
+
+function createCalendarView(items: DBRSSItem[]): CalendarMonth[] {
+  const calendars: CalendarMonth[] = [];
+  const eventsByDate = new Map<string, DBRSSItem[]>();
+  
+  // Group events by date
+  for (const item of items) {
+    if (item.event_dates && item.event_dates.length > 0) {
+      for (const eventDate of item.event_dates) {
+        const date = new Date(eventDate);
+        const dateKey = `${date.getFullYear()}-${String(date.getMonth()).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        
+        if (!eventsByDate.has(dateKey)) {
+          eventsByDate.set(dateKey, []);
+        }
+        eventsByDate.get(dateKey)!.push(item);
+      }
+    }
+  }
+  
+  // Get unique months that have events
+  const monthsWithEvents = new Set<string>();
+  for (const item of items) {
+    if (item.event_dates && item.event_dates.length > 0) {
+      for (const eventDate of item.event_dates) {
+        const date = new Date(eventDate);
+        const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
+        monthsWithEvents.add(monthKey);
+      }
+    }
+  }
+  
+  // Create calendar for each month that has events
+  for (const monthKey of Array.from(monthsWithEvents).sort()) {
+    const [yearStr, monthStr] = monthKey.split('-');
+    const year = parseInt(yearStr);
+    const month = parseInt(monthStr);
+    
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startDate = new Date(firstDay);
+    startDate.setDate(startDate.getDate() - firstDay.getDay()); // Start from Sunday
+    
+    const days: CalendarDay[] = [];
+    const currentDate = new Date(startDate);
+    
+    // Generate 6 weeks (42 days) to ensure full calendar grid
+    for (let i = 0; i < 42; i++) {
+      const dateKey = `${currentDate.getFullYear()}-${String(currentDate.getMonth()).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
+      const events = eventsByDate.get(dateKey) || [];
+      
+      days.push({
+        date: currentDate.getDate(),
+        isCurrentMonth: currentDate.getMonth() === month,
+        events,
+        fullDate: new Date(currentDate)
+      });
+      
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+    
+    const monthName = new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: 'long',
+      timeZone: 'America/Toronto'
+    }).format(firstDay);
+    
+    // Only add the month if it actually has events in the current month days
+    const hasEventsInMonth = days.some(day => day.isCurrentMonth && day.events.length > 0);
+    if (hasEventsInMonth) {
+      calendars.push({
+        year,
+        month,
+        monthName,
+        days
+      });
+    }
+  }
+  
+  return calendars;
+}
+
+function createBranchAcronym(branchName: string): string {
+  // Handle common branch name patterns
+  const cleanName = branchName.replace(/\s+Branch$/i, '').trim();
+  
+  // Special cases for common branch names
+  const specialCases: { [key: string]: string } = {
+    'Bloor/Gladstone': 'BG',
+    'High Park': 'HP',
+    'Parkdale': 'PD',
+    'North York Central': 'NYC',
+    'Scarborough Civic Centre': 'SCC',
+    'Toronto Reference Library': 'TRL',
+    'Fort York': 'FY',
+    'St. Lawrence': 'SL',
+    'Beaches': 'BCH',
+    'Danforth/Coxwell': 'DC',
+    'Gerrard/India Bazaar': 'GIB',
+    'Lillian H. Smith': 'LHS',
+    'Maria A. Shchuka': 'MAS',
+    'Northern District': 'ND',
+    'Palmerston': 'PAL',
+    'Riverdale': 'RVD',
+    'Runnymede': 'RUN',
+    'S. Walter Stewart': 'SWS',
+    'Sanderson': 'SAN',
+    'Spadina Road': 'SPD',
+    'St. Clair/Silverthorn': 'SCS',
+    'Weston': 'WST',
+    'Woodside Square': 'WSQ',
+    'York Woods': 'YW'
+  };
+  
+  if (specialCases[cleanName]) {
+    return specialCases[cleanName];
+  }
+  
+  // Generate acronym from words
+  const words = cleanName.split(/[\s\/\-]+/).filter(word => word.length > 0);
+  if (words.length === 1) {
+    return words[0].substring(0, 3).toUpperCase();
+  }
+  
+  // Take first letter of each significant word
+  return words
+    .filter(word => !['and', 'the', 'of', 'at', 'in', 'on'].includes(word.toLowerCase()))
+    .map(word => word.charAt(0).toUpperCase())
+    .join('')
+    .substring(0, 3);
+}
+
 export const handler = async (
   event: any // Changed from LambdaFunctionURLEvent to any for debugging
 ): Promise<any> => {
@@ -177,8 +322,14 @@ export const handler = async (
       return jsonResponse;
     }
     
-    // Group items by month for calendar-like display
+    // Check view type (list or calendar)
+    const view = queryStringParameters?.view || 'list';
+    
+    // Group items by month for list display
     const groupedItems = groupItemsByMonth(items);
+    
+    // Create calendar view data
+    const calendarMonths = createCalendarView(items);
     
     // Read and render the EJS template
     const templatePath = path.join(__dirname, 'views', 'index.ejs');
@@ -271,7 +422,10 @@ export const handler = async (
     const html = ejs.render(template, {
       items,
       groupedItems,
-      formatEventDate
+      calendarMonths,
+      formatEventDate,
+      createBranchAcronym,
+      view
     });
     
     const response = {

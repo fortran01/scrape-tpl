@@ -5,6 +5,7 @@
   "scripts": {
     "build": "esbuild src/handler.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --external:pg-native && cp -r src/views dist/",
     "dev": "npm run build && node dist/index.js",
+    "start": "npm run build && node local-dev.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"
