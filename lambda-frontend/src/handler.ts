@@ -35,6 +35,9 @@ function getPool(): Pool {
       max: 3, // Keep minimal for Lambda
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
+      ssl: {
+        rejectUnauthorized: false // For hosted databases like Neon
+      }
     });
   }
   return pool;
