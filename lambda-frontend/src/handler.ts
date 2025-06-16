@@ -334,29 +334,7 @@ export const handler = async (
       });
     });
     
-    // Check if JSON format is requested
-    const format = queryStringParameters?.format;
-    if (format === 'json') {
-      const jsonResponse = {
-        statusCode: 200,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
-        body: JSON.stringify({
-          items,
-          count: items.length,
-          lastUpdated: new Date().toISOString()
-        }, null, 2),
-      };
-      
-      console.log('=== JSON Response being returned ===');
-      console.log('JSON Response status:', jsonResponse.statusCode);
-      console.log('JSON Response headers:', JSON.stringify(jsonResponse.headers));
-      console.log('JSON Response body length:', jsonResponse.body.length);
-      
-      return jsonResponse;
-    }
+
     
     // Check view type (list or calendar)
     const view = queryStringParameters?.view || 'list';
@@ -396,7 +374,6 @@ export const handler = async (
         .event-date { background: #e8f4f8; padding: 8px 12px; border-radius: 4px; margin: 8px 0; color: #2B4C7E; font-weight: bold; }
         .branch-tag { background: #2B4C7E; color: white; padding: 4px 8px; border-radius: 12px; font-size: 0.8em; margin-right: 8px; }
         .no-events { text-align: center; color: #666; padding: 40px; }
-        .stats { background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 20px; }
     </style>
 </head>
 <body>
@@ -406,12 +383,6 @@ export const handler = async (
             <p>Upcoming events and programs across TPL branches</p>
         </div>
         <div class="content">
-            <div class="stats">
-                <strong>📊 <%= items.length %> active events</strong> • 
-                Last updated: <%= new Date().toLocaleString('en-US', { timeZone: 'America/Toronto' }) %>
-                <a href="?format=json" style="float: right; color: #2B4C7E;">📄 JSON API</a>
-            </div>
-            
             <% if (items.length === 0) { %>
                 <div class="no-events">
                     <h3>No events currently available</h3>

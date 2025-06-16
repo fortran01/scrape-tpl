@@ -29,31 +29,6 @@
         .header h1 { margin: 0 0 10px 0; font-size: 2.5em; }
         .header p { margin: 0; opacity: 0.9; font-size: 1.1em; }
         .content { padding: 30px; }
-        .stats { 
-            background: #f8f9fa; 
-            padding: 20px; 
-            border-radius: 8px; 
-            margin-bottom: 30px; 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center;
-            flex-wrap: wrap;
-        }
-        .stats-left { font-size: 1.1em; color: #2B4C7E; font-weight: 600; }
-        .stats-right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-        .stats-right a { 
-            color: #2B4C7E; 
-            text-decoration: none; 
-            padding: 8px 16px; 
-            border: 2px solid #2B4C7E; 
-            border-radius: 20px; 
-            transition: all 0.3s ease;
-            font-size: 0.9em;
-        }
-        .stats-right a:hover { 
-            background: #2B4C7E; 
-            color: white; 
-        }
         
         /* Month Navigation */
         .month-navigation {
@@ -165,11 +140,6 @@
             transform: scale(1.02);
             z-index: 10;
         }
-
-        
-
-        
-
         
         .no-events { 
             text-align: center; 
@@ -185,21 +155,16 @@
             .header { padding: 20px; }
             .header h1 { font-size: 2em; }
             .content { padding: 20px; }
-            .stats { flex-direction: column; gap: 15px; text-align: center; }
-            .stats-right { justify-content: center; }
             .calendar-day { min-height: 60px; padding: 3px; }
             .calendar-event { font-size: 0.6em; padding: 1px 3px; }
-
             .month-navigation { flex-direction: column; gap: 15px; }
             .current-month { min-width: auto; }
-
         }
         
         @media (max-width: 480px) {
             .calendar-day { min-height: 50px; }
             .calendar-day-number { font-size: 0.8em; }
             .calendar-event { font-size: 0.55em; }
-
         }
     </style>
 </head>
@@ -210,23 +175,6 @@
             <p>Discover upcoming events and programs across TPL branches</p>
         </div>
         <div class="content">
-            <div class="stats">
-                <div class="stats-left">
-                    📊 <strong><%= items.length %></strong> active events • 
-                    Last updated: <%= new Date().toLocaleString('en-US', { 
-                        timeZone: 'America/Toronto',
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit'
-                    }) %>
-                </div>
-                <div class="stats-right">
-                    <a href="?format=json">📄 JSON API</a>
-                </div>
-            </div>
-            
             <% if (items.length === 0) { %>
                 <div class="no-events">
                     <h3>No events currently available</h3>
@@ -286,13 +234,7 @@
         </div>
     </div>
 
-
-
-
-
     <script>
-
-
         // Month navigation
         const monthNames = [<% calendarMonths.forEach((month, index) => { %>"<%= month.monthName %>"<%= index < calendarMonths.length - 1 ? ',' : '' %><% }); %>];
         let currentMonthIndex = 0;
@@ -311,18 +253,12 @@
                 document.getElementById('currentMonthDisplay').textContent = monthNames[currentMonthIndex];
                 document.getElementById('prevMonth').disabled = currentMonthIndex === 0;
                 document.getElementById('nextMonth').disabled = currentMonthIndex === monthNames.length - 1;
-                
-
             }
         }
 
         // Initialize navigation buttons
         document.getElementById('prevMonth').disabled = currentMonthIndex === 0;
         document.getElementById('nextMonth').disabled = currentMonthIndex === monthNames.length - 1;
-
-
-
-
 
         // JavaScript version of branch acronym function
         function createBranchAcronymJS(branchName) {
