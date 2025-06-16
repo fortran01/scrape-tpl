@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "dist/index.js",
   "scripts": {
-    "build": "esbuild src/handler.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --external:pg-native && cp -r src/views dist/",
+    "build": "esbuild src/handler.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.js --external:pg-native && cp -r src/views dist/",
     "dev": "npm run build && node dist/index.js",
     "start": "npm run build && node local-dev.js",
     "test": "jest",
