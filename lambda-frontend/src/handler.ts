@@ -79,6 +79,7 @@ function formatEventDate(date: Date): string {
 }
 
 function groupItemsByMonth(items: DBRSSItem[]): Map<string, DBRSSItem[]> {
+  console.log('🔍 groupItemsByMonth: Processing', items.length, 'items');
   const grouped = new Map<string, DBRSSItem[]>();
   
   for (const item of items) {
@@ -86,25 +87,31 @@ function groupItemsByMonth(items: DBRSSItem[]): Map<string, DBRSSItem[]> {
     
     if (item.event_dates && item.event_dates.length > 0) {
       const eventDate = new Date(item.event_dates[0]);
+      console.log('📅 Event date found:', eventDate.toISOString(), 'for item:', item.title.substring(0, 30));
       monthKey = new Intl.DateTimeFormat('en-US', {
         year: 'numeric',
-        month: 'long',
-        timeZone: 'America/Toronto'
+        month: 'long'
       }).format(eventDate);
     } else {
       const lastSeen = new Date(item.last_seen);
+      console.log('📅 Using last_seen date:', lastSeen.toISOString(), 'for item:', item.title.substring(0, 30));
       monthKey = new Intl.DateTimeFormat('en-US', {
         year: 'numeric',
-        month: 'long',
-        timeZone: 'America/Toronto'
+        month: 'long'
       }).format(lastSeen);
     }
+    
+    console.log('📊 Month key:', monthKey, 'for item:', item.title.substring(0, 30));
     
     if (!grouped.has(monthKey)) {
       grouped.set(monthKey, []);
     }
     grouped.get(monthKey)!.push(item);
   }
+  
+  const monthKeys = Array.from(grouped.keys()).sort();
+  console.log('📈 Final grouped months:', monthKeys);
+  console.log('📈 Earliest month:', monthKeys[0]);
   
   return grouped;
 }
@@ -124,6 +131,7 @@ interface CalendarMonth {
 }
 
 function createCalendarView(items: DBRSSItem[]): CalendarMonth[] {
+  console.log('🗓️ createCalendarView: Processing', items.length, 'items');
   const calendars: CalendarMonth[] = [];
   const eventsByDate = new Map<string, DBRSSItem[]>();
   
@@ -132,6 +140,7 @@ function createCalendarView(items: DBRSSItem[]): CalendarMonth[] {
     if (item.event_dates && item.event_dates.length > 0) {
       for (const eventDate of item.event_dates) {
         const date = new Date(eventDate);
+        console.log('🗓️ Calendar event date:', date.toISOString(), 'for item:', item.title.substring(0, 30));
         const dateKey = `${date.getFullYear()}-${String(date.getMonth()).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
         
         if (!eventsByDate.has(dateKey)) {
@@ -144,50 +153,66 @@ function createCalendarView(items: DBRSSItem[]): CalendarMonth[] {
   
   // Get unique months that have events
   const monthsWithEvents = new Set<string>();
+  
   for (const item of items) {
     if (item.event_dates && item.event_dates.length > 0) {
       for (const eventDate of item.event_dates) {
         const date = new Date(eventDate);
         const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
+        console.log('🗓️ Adding month key:', monthKey, 'from date:', date.toISOString(), '(month', date.getMonth(), '= month name:', date.toLocaleDateString('en-US', {month: 'long'}), ')');
         monthsWithEvents.add(monthKey);
       }
     }
   }
   
   // Create calendar for each month that has events
-  for (const monthKey of Array.from(monthsWithEvents).sort()) {
+  const sortedMonthKeys = Array.from(monthsWithEvents).sort();
+  console.log('🗓️ Sorted month keys for calendar:', sortedMonthKeys);
+  console.log('🗓️ First month will be:', sortedMonthKeys[0]);
+  
+  for (const monthKey of sortedMonthKeys) {
     const [yearStr, monthStr] = monthKey.split('-');
     const year = parseInt(yearStr);
     const month = parseInt(monthStr);
+    console.log('🗓️ Creating calendar for:', year, month, '(', monthKey, ')');
     
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const startDate = new Date(firstDay);
-    startDate.setDate(startDate.getDate() - firstDay.getDay()); // Start from Sunday
+    // Use UTC dates to ensure consistent behavior across timezones
+    const firstDay = new Date(Date.UTC(year, month, 1));
+    const firstDayOfWeek = firstDay.getUTCDay(); // 0=Sunday, 1=Monday, etc.
+    
+    const lastDay = new Date(Date.UTC(year, month + 1, 0));
+    const startDate = new Date(Date.UTC(year, month, 1 - firstDayOfWeek));
     
     const days: CalendarDay[] = [];
     const currentDate = new Date(startDate);
     
     // Generate 6 weeks (42 days) to ensure full calendar grid
     for (let i = 0; i < 42; i++) {
-      const dateKey = `${currentDate.getFullYear()}-${String(currentDate.getMonth()).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
+      const dateKey = `${currentDate.getUTCFullYear()}-${String(currentDate.getUTCMonth()).padStart(2, '0')}-${String(currentDate.getUTCDate()).padStart(2, '0')}`;
       const events = eventsByDate.get(dateKey) || [];
       
       days.push({
-        date: currentDate.getDate(),
-        isCurrentMonth: currentDate.getMonth() === month,
+        date: currentDate.getUTCDate(),
+        isCurrentMonth: currentDate.getUTCMonth() === month,
         events,
         fullDate: new Date(currentDate)
       });
       
-      currentDate.setDate(currentDate.getDate() + 1);
+      currentDate.setUTCDate(currentDate.getUTCDate() + 1);
     }
     
     const monthName = new Intl.DateTimeFormat('en-US', {
       year: 'numeric',
-      month: 'long',
-      timeZone: 'America/Toronto'
-    }).format(firstDay);
+      month: 'long'
+    }).format(new Date(year, month, 1));
+    
+    console.log('🗓️ Month name generation:', {
+      year,
+      month,
+      monthKey: `${year}-${month}`,
+      dateCreated: new Date(year, month, 1).toISOString(),
+      monthName
+    });
     
     // Only add the month if it actually has events in the current month days
     const hasEventsInMonth = days.some(day => day.isCurrentMonth && day.events.length > 0);
@@ -297,6 +322,17 @@ export const handler = async (
     console.log('Fetching TPL items from database...');
     const items = await fetchTPLItems();
     console.log(`Found ${items.length} active items`);
+    
+    // Debug: Log first few items to see their dates
+    console.log('🔍 First 3 items for debugging:');
+    items.slice(0, 3).forEach((item, index) => {
+      console.log(`Item ${index + 1}:`, {
+        title: item.title.substring(0, 50),
+        event_dates: item.event_dates,
+        last_seen: item.last_seen,
+        first_seen: item.first_seen
+      });
+    });
     
     // Check if JSON format is requested
     const format = queryStringParameters?.format;
