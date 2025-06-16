@@ -236,6 +236,7 @@ function createBranchAcronym(branchName: string): string {
   // Special cases for common branch names
   const specialCases: { [key: string]: string } = {
     'Bloor/Gladstone': 'BG',
+    'College/Shaw': 'CS',
     'High Park': 'HP',
     'Parkdale': 'PD',
     'North York Central': 'NYC',

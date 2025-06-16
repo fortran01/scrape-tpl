@@ -14,6 +14,21 @@
       "name": "Bloor/Gladstone Branch",
       "url": "https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33103+37846&Ns=p_pub_date_sort&Nso=0",
       "enabled": true
+    },
+    {
+      "name": "College/Shaw Branch", 
+      "url": "https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33114+37846&Ns=p_pub_date_sort&Nso=0",
+      "enabled": true
+    },
+    {
+      "name": "Sanderson Branch", 
+      "url": "https://www.torontopubliclibrary.ca/rss.jsp?N=37867+33176+37846&Ns=p_pub_date_sort&Nso=0",
+      "enabled": true
+    },
+    {
+      "name": "Fort York Branch", 
+      "url": "https://www.torontopubliclibrary.ca/rss.jsp?N=37867+38745+37850&Ns=p_pub_date_sort&Nso=0",
+      "enabled": true
     }
   ],
   "email": {

@@ -203,25 +203,79 @@ class TPLScraper {
         WHERE feed_name IS NULL OR feed_name = '';
       `);
 
-      // Drop the old unique constraint if it exists and create the new one
-      await client.query(`
-        ALTER TABLE rss_items 
-        DROP CONSTRAINT IF EXISTS rss_items_title_key;
+      // Check if we have the old unique constraint on title only
+      const oldConstraintResult = await client.query(`
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'rss_items_title_key'
       `);
+      
+      const hasOldConstraint = oldConstraintResult.rows.length > 0;
+      
+      if (hasOldConstraint) {
+        console.log('🔄 Migrating from old unique constraint (title only) to new constraint (title, feed_name)');
+        
+        // Check for potential conflicts before migration
+        const conflictCheck = await client.query(`
+          SELECT title, COUNT(*) as count, array_agg(DISTINCT feed_name) as feeds
+          FROM rss_items 
+          GROUP BY title 
+          HAVING COUNT(*) > 1
+        `);
+        
+        if (conflictCheck.rows.length > 0) {
+          console.log('⚠️  Found titles that exist across multiple feeds:');
+          conflictCheck.rows.forEach((row: any) => {
+            console.log(`   - "${row.title}" exists in feeds: ${row.feeds.join(', ')}`);
+          });
+          
+          // For titles that exist across multiple feeds, keep only the most recent one
+          // and mark others as inactive to avoid constraint violations
+          for (const conflict of conflictCheck.rows) {
+            const title = conflict.title;
+            console.log(`🔧 Resolving conflict for: "${title}"`);
+            
+            // Get all records for this title, ordered by last_seen DESC
+            const duplicates = await client.query(`
+              SELECT id, feed_name, last_seen, is_active 
+              FROM rss_items 
+              WHERE title = $1 
+              ORDER BY last_seen DESC, id DESC
+            `, [title]);
+            
+            // Keep the first (most recent) record active, mark others as inactive
+            for (let i = 1; i < duplicates.rows.length; i++) {
+              const duplicate = duplicates.rows[i];
+              console.log(`   - Marking as inactive: ID ${duplicate.id} from ${duplicate.feed_name}`);
+              await client.query(`
+                UPDATE rss_items 
+                SET is_active = FALSE, updated_at = NOW() 
+                WHERE id = $1
+              `, [duplicate.id]);
+            }
+          }
+        }
+        
+        // Now drop the old constraint
+        console.log('🗑️  Dropping old unique constraint on title only');
+        await client.query(`
+          ALTER TABLE rss_items 
+          DROP CONSTRAINT rss_items_title_key;
+        `);
+      }
 
       // Add the new unique constraint if it doesn't exist
-      await client.query(`
-        DO $$ 
-        BEGIN
-          IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint 
-            WHERE conname = 'rss_items_title_feed_name_key'
-          ) THEN
-            ALTER TABLE rss_items 
-            ADD CONSTRAINT rss_items_title_feed_name_key UNIQUE (title, feed_name);
-          END IF;
-        END $$;
+      const newConstraintResult = await client.query(`
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'rss_items_title_feed_name_key'
       `);
+      
+      if (newConstraintResult.rows.length === 0) {
+        console.log('✨ Adding new unique constraint on (title, feed_name)');
+        await client.query(`
+          ALTER TABLE rss_items 
+          ADD CONSTRAINT rss_items_title_feed_name_key UNIQUE (title, feed_name);
+        `);
+      }
 
       // Create index for performance
       await client.query(`
@@ -231,9 +285,9 @@ class TPLScraper {
         CREATE INDEX IF NOT EXISTS idx_rss_items_feed_name ON rss_items(feed_name);
       `);
 
-      console.log('Database initialized successfully');
+      console.log('✅ Database initialized successfully');
     } catch (error) {
-      console.error('Error initializing database:', error);
+      console.error('❌ Error initializing database:', error);
       throw error;
     } finally {
       client.release();
@@ -358,13 +412,15 @@ class TPLScraper {
       );
       const currentActiveTitles = new Set(currentActiveResult.rows.map((row: any) => row.title));
 
+      console.log(`📊 Feed "${feedName}": Found ${currentActiveTitles.size} existing active items in database`);
+
       // Process new items
       const newItemTitles: string[] = [];
       const currentItemTitles = new Set<string>();
 
       for (const item of items) {
         // Safely extract data with fallbacks for undefined/empty arrays
-        const title = item.title?.[0];
+        const title = item.title?.[0]?.trim(); // Trim whitespace from title
         const link = item.link?.[0];
         const description = item.description?.[0];
         const contentEncoded = item['content:encoded']?.[0];
@@ -382,25 +438,48 @@ class TPLScraper {
         currentItemTitles.add(title);
 
         // Check if this is a new item
-        if (!currentActiveTitles.has(title)) {
-          newItemTitles.push(title);
+        const isNewItem = !currentActiveTitles.has(title);
+        if (isNewItem) {
+          newItemTitles.push(title); // This should already be trimmed from above
+        }
+
+        // Debug logging for "After School Club" specifically
+        if (title.includes('After School Club')) {
+          console.log(`🔍 DEBUG: Processing "${title}" for ${feedName}`);
+          console.log(`   - Is new item: ${isNewItem}`);
+          console.log(`   - Current active titles contains this: ${currentActiveTitles.has(title)}`);
+          
+          // Check if this title exists in ANY feed (not just this one)
+          const globalCheck = await client.query(
+            'SELECT feed_name, is_active FROM rss_items WHERE title = $1',
+            [title]
+          );
+          console.log(`   - Global database check: found ${globalCheck.rows.length} records`);
+          globalCheck.rows.forEach((row: any) => {
+            console.log(`     * Feed: ${row.feed_name}, Active: ${row.is_active}`);
+          });
         }
 
         // Upsert the item
-        await client.query(`
-          INSERT INTO rss_items (title, link, description, content_encoded, record_data, event_dates, feed_name, last_seen, is_active)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), TRUE)
-          ON CONFLICT (title, feed_name) 
-          DO UPDATE SET 
-            link = EXCLUDED.link,
-            description = EXCLUDED.description,
-            content_encoded = EXCLUDED.content_encoded,
-            record_data = EXCLUDED.record_data,
-            event_dates = EXCLUDED.event_dates,
-            last_seen = NOW(),
-            is_active = TRUE,
-            updated_at = NOW()
-        `, [title, link, description, contentEncoded, recordData, eventDates, feedName]);
+        try {
+          await client.query(`
+            INSERT INTO rss_items (title, link, description, content_encoded, record_data, event_dates, feed_name, last_seen, is_active)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), TRUE)
+            ON CONFLICT (title, feed_name) 
+            DO UPDATE SET 
+              link = EXCLUDED.link,
+              description = EXCLUDED.description,
+              content_encoded = EXCLUDED.content_encoded,
+              record_data = EXCLUDED.record_data,
+              event_dates = EXCLUDED.event_dates,
+              last_seen = NOW(),
+              is_active = TRUE,
+              updated_at = NOW()
+          `, [title, link, description, contentEncoded, recordData, eventDates, feedName]);
+        } catch (dbError) {
+          console.error(`❌ Database error inserting "${title}" for ${feedName}:`, dbError);
+          throw dbError;
+        }
       }
 
       // Mark items as inactive if they're no longer in the feed
@@ -486,57 +565,77 @@ class TPLScraper {
     return true;
   }
 
-  private formatContent(items: RSSItemWithFeed[], newEvents: Set<string>, removedEvents: Set<string>): string {
-    // Create a mapping from event title to branch name for new/removed events
-    const titleToBranchMap = new Map<string, string>();
+  private formatContent(items: RSSItemWithFeed[], newEvents: Set<string>, removedEvents: Set<string>, newEventsByFeed?: Map<string, string[]>): string {
+    // Create a mapping from event title to ALL branch names where it appears
+    const titleToBranchesMap = new Map<string, string[]>();
     items.forEach(item => {
-      const title = item.title?.[0] || 'No Title';
-      titleToBranchMap.set(title, item.feedName);
+      const title = (item.title?.[0] || 'No Title').trim(); // Trim whitespace
+      if (!titleToBranchesMap.has(title)) {
+        titleToBranchesMap.set(title, []);
+      }
+      if (!titleToBranchesMap.get(title)!.includes(item.feedName)) {
+        titleToBranchesMap.get(title)!.push(item.feedName);
+      }
     });
 
     const changeSummary = [];
     if (newEvents.size > 0) {
-      // Group new events by branch
-      const eventsByBranch = new Map<string, string[]>();
-      Array.from(newEvents).forEach(title => {
-        const branch = titleToBranchMap.get(title) || 'Unknown Branch';
-        if (!eventsByBranch.has(branch)) {
-          eventsByBranch.set(branch, []);
-        }
-        eventsByBranch.get(branch)!.push(title);
-      });
+      // Use the newEventsByFeed map if available, otherwise fall back to the old method
+      if (newEventsByFeed && newEventsByFeed.size > 0) {
+        // Create grouped HTML using the accurate feed-to-events mapping
+        const branchSections = Array.from(newEventsByFeed.entries()).map(([branch, titles]) => {
+          const eventsList = titles.map(title => `<li>${title}</li>`).join('');
+          return `<h4 style="color: #2B4C7E; margin: 15px 0 8px 0; font-size: 1.1em;">📍 ${branch}</h4><ul style="margin-top: 5px;">${eventsList}</ul>`;
+        });
+        
+        changeSummary.push(`<h3>🆕 New Events:</h3>${branchSections.join('')}`);
+      } else {
+        // Fallback to old method
+        const eventsByBranch = new Map<string, string[]>();
+        Array.from(newEvents).forEach(title => {
+          const branches = titleToBranchesMap.get(title) || ['Unknown Branch'];
+          const branch = branches[0]; // Just use the first branch as fallback
+          if (!eventsByBranch.has(branch)) {
+            eventsByBranch.set(branch, []);
+          }
+          eventsByBranch.get(branch)!.push(title);
+        });
 
-      // Create grouped HTML
-      const branchSections = Array.from(eventsByBranch.entries()).map(([branch, titles]) => {
-        const eventsList = titles.map(title => `<li>${title}</li>`).join('');
-        return `<h4 style="color: #2B4C7E; margin: 15px 0 8px 0; font-size: 1.1em;">📍 ${branch}</h4><ul style="margin-top: 5px;">${eventsList}</ul>`;
-      });
-      
-      changeSummary.push(`<h3>🆕 New Events:</h3>${branchSections.join('')}`);
+        const branchSections = Array.from(eventsByBranch.entries()).map(([branch, titles]) => {
+          const eventsList = titles.map(title => `<li>${title}</li>`).join('');
+          return `<h4 style="color: #2B4C7E; margin: 15px 0 8px 0; font-size: 1.1em;">📍 ${branch}</h4><ul style="margin-top: 5px;">${eventsList}</ul>`;
+        });
+        
+        changeSummary.push(`<h3>🆕 New Events:</h3>${branchSections.join('')}`);
+      }
     }
     if (removedEvents.size > 0) {
       // Group removed events by branch
-      const eventsByBranch = new Map<string, string[]>();
+      const removedEventsByBranch = new Map<string, string[]>();
       Array.from(removedEvents).forEach(title => {
-        const branch = titleToBranchMap.get(title) || 'Unknown Branch';
-        if (!eventsByBranch.has(branch)) {
-          eventsByBranch.set(branch, []);
-        }
-        eventsByBranch.get(branch)!.push(title);
+        const branches = titleToBranchesMap.get(title) || ['Unknown Branch'];
+        branches.forEach(branch => {
+          if (!removedEventsByBranch.has(branch)) {
+            removedEventsByBranch.set(branch, []);
+          }
+          if (!removedEventsByBranch.get(branch)!.includes(title)) {
+            removedEventsByBranch.get(branch)!.push(title);
+          }
+        });
       });
 
       // Create grouped HTML
-      const branchSections = Array.from(eventsByBranch.entries()).map(([branch, titles]) => {
-        const eventsList = titles.map(title => `<li>${title}</li>`).join('');
+      const removedBranchSections = Array.from(removedEventsByBranch.entries()).map(([branch, titles]: [string, string[]]) => {
+        const eventsList = titles.map((title: string) => `<li>${title}</li>`).join('');
         return `<h4 style="color: #2B4C7E; margin: 15px 0 8px 0; font-size: 1.1em;">📍 ${branch}</h4><ul style="margin-top: 5px;">${eventsList}</ul>`;
       });
       
-      changeSummary.push(`<h3>🗑️ Removed Events:</h3>${branchSections.join('')}`);
+      changeSummary.push(`<h3>🗑️ Removed Events:</h3>${removedBranchSections.join('')}`);
     }
 
     const eventsList = items.map(item => {
       // Safely extract data with fallbacks
-      const title = item.title?.[0] || 'No Title';
+      const title = (item.title?.[0] || 'No Title').trim(); // Trim whitespace
       const link = item.link?.[0] || '#';
       const contentEncoded = item['content:encoded']?.[0] || '';
       
@@ -942,6 +1041,7 @@ class TPLScraper {
       const allNewEvents = new Set<string>();
       const allRemovedEvents = new Set<string>();
       const allCurrentItems: RSSItemWithFeed[] = [];
+      const newEventsByFeed = new Map<string, string[]>(); // Track which feed each new event belongs to
 
       for (const feed of enabledFeeds) {
         console.log(`Processing feed: ${feed.name}`);
@@ -958,6 +1058,11 @@ class TPLScraper {
             newItems.forEach(item => allNewEvents.add(item));
             removedItems.forEach(item => allRemovedEvents.add(item));
             
+            // Track which feed each new event belongs to
+            if (newItems.length > 0) {
+              newEventsByFeed.set(feed.name, newItems);
+            }
+            
             // Add feed name to items for display
             const itemsWithFeed: RSSItemWithFeed[] = currentItems.map(item => ({
               ...item,
@@ -966,6 +1071,20 @@ class TPLScraper {
             allCurrentItems.push(...itemsWithFeed);
 
             console.log(`Feed ${feed.name}: ${newItems.length} new, ${removedItems.length} removed`);
+            
+            // Debug logging for new items
+            if (newItems.length > 0) {
+              console.log(`   New items for ${feed.name}:`);
+              newItems.forEach(item => {
+                console.log(`     - ${item}`);
+              });
+              
+              // Check for duplicates within this feed
+              const uniqueNewItems = new Set(newItems);
+              if (uniqueNewItems.size !== newItems.length) {
+                console.log(`   ⚠️  Warning: ${newItems.length - uniqueNewItems.size} duplicate(s) found in ${feed.name}`);
+              }
+            }
           } else {
             console.warn(`No items found for feed: ${feed.name}`);
           }
@@ -980,12 +1099,30 @@ class TPLScraper {
       const isFirstRun = dbItems.length === allCurrentItems.length && allNewEvents.size === allCurrentItems.length;
 
       if (allNewEvents.size > 0 || allRemovedEvents.size > 0) {
-        console.log(`Overall changes detected - New: ${allNewEvents.size}, Removed: ${allRemovedEvents.size}`);
-        const formattedContent = this.formatContent(allCurrentItems, allNewEvents, allRemovedEvents);
+        // Calculate total events shown in email (including duplicates across branches)
+        const totalEventsInEmail = Array.from(newEventsByFeed.values()).reduce((sum, events) => sum + events.length, 0);
+        
+        console.log(`Overall changes detected - New: ${allNewEvents.size} unique events, ${totalEventsInEmail} total (including cross-branch), Removed: ${allRemovedEvents.size}`);
+        
+        // Debug: Show all new events
+        if (allNewEvents.size > 0) {
+          console.log('🆕 All unique new events across all feeds:');
+          Array.from(allNewEvents).forEach(event => {
+            console.log(`   - ${event}`);
+          });
+          
+          // Show breakdown by feed
+          console.log('📊 New events by feed:');
+          newEventsByFeed.forEach((events, feedName) => {
+            console.log(`   ${feedName}: ${events.length} events`);
+          });
+        }
+        
+        const formattedContent = this.formatContent(allCurrentItems, allNewEvents, allRemovedEvents, newEventsByFeed);
         await this.sendEmail(formattedContent);
       } else if (isFirstRun) {
         console.log('First run detected - sending initial email with all items');
-        const formattedContent = this.formatContent(allCurrentItems, new Set(), new Set());
+        const formattedContent = this.formatContent(allCurrentItems, new Set(), new Set(), new Map());
         await this.sendEmail(formattedContent);
       } else {
         console.log('No changes detected across all feeds');
