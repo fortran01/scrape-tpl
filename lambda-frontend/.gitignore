@@ -15,6 +15,9 @@ dist/
 .env.test.local
 .env.production.local
 
+# Local development files (may contain sensitive data)
+local-dev.js
+
 # Testing
 coverage/
 *.lcov
