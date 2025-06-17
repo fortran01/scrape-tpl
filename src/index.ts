@@ -62,7 +62,7 @@ interface DBRSSItem {
   feed_name: string;
 }
 
-class TPLScraper {
+export class TPLScraper {
   private readonly transporter: nodemailer.Transporter;
   private readonly pool: Pool;
   private readonly config: Config;
