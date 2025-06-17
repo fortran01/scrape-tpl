@@ -565,7 +565,7 @@ class TPLScraper {
     return true;
   }
 
-  private formatContent(items: RSSItemWithFeed[], newEvents: Set<string>, removedEvents: Set<string>, newEventsByFeed?: Map<string, string[]>): string {
+  private formatContent(items: RSSItemWithFeed[], newEvents: Set<string>, removedEvents: Set<string>, newEventsByFeed?: Map<string, string[]>, removedEventsByFeed?: Map<string, string[]>): string {
     // Create a mapping from event title to ALL branch names where it appears
     const titleToBranchesMap = new Map<string, string[]>();
     items.forEach(item => {
@@ -610,27 +610,38 @@ class TPLScraper {
       }
     }
     if (removedEvents.size > 0) {
-      // Group removed events by branch
-      const removedEventsByBranch = new Map<string, string[]>();
-      Array.from(removedEvents).forEach(title => {
-        const branches = titleToBranchesMap.get(title) || ['Unknown Branch'];
-        branches.forEach(branch => {
-          if (!removedEventsByBranch.has(branch)) {
-            removedEventsByBranch.set(branch, []);
-          }
-          if (!removedEventsByBranch.get(branch)!.includes(title)) {
-            removedEventsByBranch.get(branch)!.push(title);
-          }
+      // Use the removedEventsByFeed map if available for accurate branch information
+      if (removedEventsByFeed && removedEventsByFeed.size > 0) {
+        // Create grouped HTML using the accurate feed-to-events mapping
+        const removedBranchSections = Array.from(removedEventsByFeed.entries()).map(([branch, titles]: [string, string[]]) => {
+          const eventsList = titles.map((title: string) => `<li>${title}</li>`).join('');
+          return `<h4 style="color: #2B4C7E; margin: 15px 0 8px 0; font-size: 1.1em;">📍 ${branch}</h4><ul style="margin-top: 5px;">${eventsList}</ul>`;
         });
-      });
+        
+        changeSummary.push(`<h3>🗑️ Removed Events:</h3>${removedBranchSections.join('')}`);
+      } else {
+        // Fallback to old method - this is where "Unknown Branch" was coming from
+        const removedEventsByBranch = new Map<string, string[]>();
+        Array.from(removedEvents).forEach(title => {
+          const branches = titleToBranchesMap.get(title) || ['Unknown Branch'];
+          branches.forEach(branch => {
+            if (!removedEventsByBranch.has(branch)) {
+              removedEventsByBranch.set(branch, []);
+            }
+            if (!removedEventsByBranch.get(branch)!.includes(title)) {
+              removedEventsByBranch.get(branch)!.push(title);
+            }
+          });
+        });
 
-      // Create grouped HTML
-      const removedBranchSections = Array.from(removedEventsByBranch.entries()).map(([branch, titles]: [string, string[]]) => {
-        const eventsList = titles.map((title: string) => `<li>${title}</li>`).join('');
-        return `<h4 style="color: #2B4C7E; margin: 15px 0 8px 0; font-size: 1.1em;">📍 ${branch}</h4><ul style="margin-top: 5px;">${eventsList}</ul>`;
-      });
-      
-      changeSummary.push(`<h3>🗑️ Removed Events:</h3>${removedBranchSections.join('')}`);
+        // Create grouped HTML
+        const removedBranchSections = Array.from(removedEventsByBranch.entries()).map(([branch, titles]: [string, string[]]) => {
+          const eventsList = titles.map((title: string) => `<li>${title}</li>`).join('');
+          return `<h4 style="color: #2B4C7E; margin: 15px 0 8px 0; font-size: 1.1em;">📍 ${branch}</h4><ul style="margin-top: 5px;">${eventsList}</ul>`;
+        });
+        
+        changeSummary.push(`<h3>🗑️ Removed Events:</h3>${removedBranchSections.join('')}`);
+      }
     }
 
     const eventsList = items.map(item => {
@@ -1042,6 +1053,7 @@ class TPLScraper {
       const allRemovedEvents = new Set<string>();
       const allCurrentItems: RSSItemWithFeed[] = [];
       const newEventsByFeed = new Map<string, string[]>(); // Track which feed each new event belongs to
+      const removedEventsByFeed = new Map<string, string[]>(); // Track which feed each removed event belongs to
 
       for (const feed of enabledFeeds) {
         console.log(`Processing feed: ${feed.name}`);
@@ -1061,6 +1073,11 @@ class TPLScraper {
             // Track which feed each new event belongs to
             if (newItems.length > 0) {
               newEventsByFeed.set(feed.name, newItems);
+            }
+            
+            // Track which feed each removed event belongs to
+            if (removedItems.length > 0) {
+              removedEventsByFeed.set(feed.name, removedItems);
             }
             
             // Add feed name to items for display
@@ -1084,6 +1101,14 @@ class TPLScraper {
               if (uniqueNewItems.size !== newItems.length) {
                 console.log(`   ⚠️  Warning: ${newItems.length - uniqueNewItems.size} duplicate(s) found in ${feed.name}`);
               }
+            }
+            
+            // Debug logging for removed items
+            if (removedItems.length > 0) {
+              console.log(`   Removed items for ${feed.name}:`);
+              removedItems.forEach(item => {
+                console.log(`     - ${item}`);
+              });
             }
           } else {
             console.warn(`No items found for feed: ${feed.name}`);
@@ -1118,11 +1143,25 @@ class TPLScraper {
           });
         }
         
-        const formattedContent = this.formatContent(allCurrentItems, allNewEvents, allRemovedEvents, newEventsByFeed);
+        // Debug: Show all removed events
+        if (allRemovedEvents.size > 0) {
+          console.log('🗑️ All unique removed events across all feeds:');
+          Array.from(allRemovedEvents).forEach(event => {
+            console.log(`   - ${event}`);
+          });
+          
+          // Show breakdown by feed
+          console.log('📊 Removed events by feed:');
+          removedEventsByFeed.forEach((events, feedName) => {
+            console.log(`   ${feedName}: ${events.length} events`);
+          });
+        }
+        
+        const formattedContent = this.formatContent(allCurrentItems, allNewEvents, allRemovedEvents, newEventsByFeed, removedEventsByFeed);
         await this.sendEmail(formattedContent);
       } else if (isFirstRun) {
         console.log('First run detected - sending initial email with all items');
-        const formattedContent = this.formatContent(allCurrentItems, new Set(), new Set(), new Map());
+        const formattedContent = this.formatContent(allCurrentItems, new Set(), new Set(), new Map(), new Map());
         await this.sendEmail(formattedContent);
       } else {
         console.log('No changes detected across all feeds');
